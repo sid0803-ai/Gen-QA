@@ -12,10 +12,14 @@ from abc import ABC, abstractmethod
 
 from app.domains.ai.schemas import (
     AmbiguityItem,
+    FeasibilityScenario,
+    FeasibilityStudyPayload,
     RationaleItem,
     RequirementAnalysisPayload,
     RequirementInput,
     RiskItem,
+    TestingLevelScope,
+    TestStrategyPayload,
 )
 
 
@@ -23,6 +27,21 @@ class AIProvider(ABC):
     @abstractmethod
     def analyze_requirement(self, requirement: RequirementInput) -> RequirementAnalysisPayload:
         """Produce a structured analysis of the given requirement."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def feasibility_study(self, requirement: RequirementInput) -> FeasibilityStudyPayload:
+        """Propose a set of testable scenarios with an automate/manual/hybrid/
+        needs_review recommendation each."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def generate_test_strategy(
+        self, requirement: RequirementInput, feasibility: FeasibilityStudyPayload | None
+    ) -> TestStrategyPayload:
+        """Propose a testing-level breakdown (+ environments/test-data/
+        dependencies). `feasibility`, when provided (typically an approved
+        FeasibilityStudy's payload), gives extra context to inform scope."""
         raise NotImplementedError
 
 
@@ -66,6 +85,59 @@ _VAGUE_WORDS = [
     "fast", "quickly", "efficient", "user-friendly", "some", "several",
     "many", "appropriate", "reasonable", "etc", "as needed",
     "should probably", "might", "typically", "easy to use",
+]
+
+
+# (keywords, scenario title, recommendation, reason) rules used by
+# MockAIProvider.feasibility_study to derive scenarios from a requirement's
+# text. Order matters: earlier rules are checked first and each contributes
+# at most one scenario, capped overall in feasibility_study().
+_FEASIBILITY_RULES: list[tuple[list[str], str, str, str]] = [
+    (["captcha", "recaptcha"],
+     "CAPTCHA validation", "needs_review",
+     "CAPTCHA challenges are deliberately non-deterministic and designed to resist "
+     "automated interaction; whether to automate depends on an available test-mode "
+     "bypass, so this needs human review before a final call is made."),
+    (["third-party", "external", "webhook", "payment gateway", "sms gateway"],
+     "Third-party/external system integration", "manual",
+     "Behavior depends on a third-party/external system outside this application's "
+     "control, which introduces non-determinism (latency, outages, sandbox drift) "
+     "that makes automated assertions brittle."),
+    (["email", "notify", "notification"],
+     "Notification delivery", "manual",
+     "Delivery of email/notification content depends on an external provider and "
+     "inbox/queue timing, which is non-deterministic in an automated test run."),
+    (["upload", "file", "attachment", "import", "document"],
+     "File upload handling", "hybrid",
+     "Combines deterministic validation logic (file type/size checks, well suited to "
+     "automation) with UI/file-handling aspects that benefit from manual verification, "
+     "so a hybrid approach is appropriate."),
+    (["exploratory", "ux", "usability", "visual", "look and feel", "layout", "accessibility"],
+     "Exploratory/UX review", "manual",
+     "This aspect is subjective/visual and is better assessed through human "
+     "exploratory testing than scripted assertions."),
+    (["login", "registration", "sign up", "signup", "sign in", "api", "endpoint"],
+     "API/functional flow", "automate",
+     "This is a deterministic, rule-based flow through a stable API/UI surface, well "
+     "suited to automated regression coverage."),
+    (["calculation", "compute", "validation", "validate", "workflow", "process", "rule", "threshold"],
+     "Business rule/calculation validation", "automate",
+     "Rule-based/deterministic logic is well suited to automated checks against fixed "
+     "input/output pairs."),
+]
+
+
+# (keywords, level) rules used by MockAIProvider.generate_test_strategy to
+# decide which testing levels are applicable beyond the always-applicable
+# "functional" and "regression" levels.
+_LEVEL_RULES: list[tuple[list[str], str]] = [
+    (["api", "endpoint", "webhook", "integration", "service", "third-party", "external", "sync"], "api"),
+    (["ui", "screen", "page", "form", "button", "layout", "visual", "responsive"], "ui"),
+    (["integration", "third-party", "external", "webhook", "sync", "api"], "integration"),
+    (["auth", "login", "password", "sso", "session", "token", "permission", "role",
+      "access control", "payment", "billing", "credit card", "checkout"], "security"),
+    (["performance", "concurrent", "simultaneous", "real-time", "realtime", "parallel",
+      "load", "scale", "throughput", "large"], "performance"),
 ]
 
 
@@ -290,3 +362,209 @@ class MockAIProvider(AIProvider):
                 rationale="General recommendation to pair automation with human exploratory testing.",
             )
         ]
+
+    # --- Feasibility Study (Sprint 3) -----------------------------------
+
+    def feasibility_study(self, requirement: RequirementInput) -> FeasibilityStudyPayload:
+        text = _combined_text(requirement)
+        title = requirement.title.strip() or "this requirement"
+
+        scenarios: list[FeasibilityScenario] = [
+            FeasibilityScenario(
+                title=f"{title} — happy path",
+                description=f"Primary success flow through '{title}' exactly as described.",
+                recommendation="automate",
+                reason="Deterministic, well-defined happy-path behavior is well suited to "
+                "automated regression coverage.",
+            )
+        ]
+
+        if requirement.acceptance_criteria:
+            for sentence in _split_sentences(requirement.acceptance_criteria)[:3]:
+                scenarios.append(
+                    FeasibilityScenario(
+                        title=f"Verify acceptance criterion: {sentence[:60]}",
+                        description=f"Validate that '{title}' satisfies: {sentence}.",
+                        recommendation="automate",
+                        reason="Derived directly from a stated, measurable acceptance "
+                        "criterion, which is repeatable and well suited to automation.",
+                    )
+                )
+
+        for keywords, scenario_title, recommendation, reason in _FEASIBILITY_RULES:
+            if any(k in text for k in keywords):
+                scenarios.append(
+                    FeasibilityScenario(
+                        title=f"{scenario_title} — {title}",
+                        description=f"Assess '{scenario_title.lower()}' behavior for '{title}'.",
+                        recommendation=recommendation,
+                        reason=reason,
+                    )
+                )
+            if len(scenarios) >= 7:
+                break
+
+        if len(scenarios) == 1:
+            # No acceptance-criteria-derived or keyword-matched scenarios beyond
+            # the always-present happy path: add a generic review scenario so a
+            # feasibility study always surfaces more than a single trivial item.
+            scenarios.append(
+                FeasibilityScenario(
+                    title=f"General scope review — {title}",
+                    description=f"'{title}' did not match any strong automation/manual "
+                    "signal keywords; its testable scope should be reviewed.",
+                    recommendation="needs_review",
+                    reason="No specific automation or manual-testing signal was detected "
+                    "in the requirement text, so this should be reviewed and classified "
+                    "before test design.",
+                )
+            )
+
+        automate_count = sum(1 for s in scenarios if s.recommendation == "automate")
+        manual_count = sum(1 for s in scenarios if s.recommendation in ("manual", "hybrid"))
+        review_count = sum(1 for s in scenarios if s.recommendation == "needs_review")
+        summary = (
+            f"Feasibility study for '{title}' identified {len(scenarios)} testable "
+            f"scenario(s): {automate_count} recommended for automation, {manual_count} "
+            f"for manual/hybrid execution, and {review_count} flagged for review."
+        )
+
+        return FeasibilityStudyPayload(summary=summary, scenarios=scenarios[:7])
+
+    # --- Test Strategy (Sprint 3) ----------------------------------------
+
+    def generate_test_strategy(
+        self, requirement: RequirementInput, feasibility: FeasibilityStudyPayload | None
+    ) -> TestStrategyPayload:
+        text = _combined_text(requirement)
+        title = requirement.title.strip() or "this requirement"
+
+        scenario_count = len(feasibility.scenarios) if feasibility else 0
+        automatable_count = (
+            sum(
+                1
+                for s in feasibility.scenarios
+                if (s.overridden_recommendation or s.recommendation) in ("automate", "hybrid")
+            )
+            if feasibility
+            else 0
+        )
+        manual_count = scenario_count - automatable_count if feasibility else 0
+
+        applicable_levels = {level for keywords, level in _LEVEL_RULES if any(k in text for k in keywords)}
+
+        levels: list[TestingLevelScope] = []
+        functional_count = max(3, scenario_count) if scenario_count else 3
+        levels.append(
+            TestingLevelScope(
+                level="functional",
+                applicable=True,
+                estimated_scenario_count=functional_count,
+                notes=f"Core functional coverage of '{title}', including its primary flows "
+                "and stated acceptance criteria.",
+            )
+        )
+
+        for level, base_notes in [
+            ("api", "Coverage of request/response contracts and error handling for any "
+             "API/service endpoints involved."),
+            ("ui", "Coverage of UI interactions, form validation, and visual states."),
+            ("integration", "Coverage of interactions with external/third-party systems, "
+             "including failure and timeout handling."),
+            ("security", "Coverage of authentication, authorization, and access-control "
+             "boundaries relevant to this requirement."),
+            ("performance", "Coverage of load/concurrency behavior where the requirement's "
+             "scope suggests it matters."),
+        ]:
+            applicable = level in applicable_levels
+            levels.append(
+                TestingLevelScope(
+                    level=level,
+                    applicable=applicable,
+                    estimated_scenario_count=(2 if applicable else 0),
+                    notes=(base_notes if applicable else f"'{title}' does not show strong "
+                           f"signal for {level} testing; not currently in scope."),
+                )
+            )
+
+        regression_count = max(1, automatable_count) if feasibility else 2
+        levels.append(
+            TestingLevelScope(
+                level="regression",
+                applicable=True,
+                estimated_scenario_count=regression_count,
+                notes="Automated scenarios from this requirement should be folded into the "
+                "regression suite once approved.",
+            )
+        )
+
+        environments = ["staging"]
+        if "security" in applicable_levels:
+            environments.append("isolated security-test environment")
+        if "integration" in applicable_levels or "api" in applicable_levels:
+            environments.append("sandboxed third-party/integration environment")
+        if "performance" in applicable_levels:
+            environments.append("performance/load-test environment")
+
+        test_data_requirements = [
+            f"Representative valid and invalid input data covering '{title}'s stated "
+            "acceptance criteria."
+        ]
+        if "security" in applicable_levels:
+            test_data_requirements.append(
+                "Test accounts spanning each relevant role/permission level."
+            )
+        if "integration" in applicable_levels or "api" in applicable_levels:
+            test_data_requirements.append(
+                "Mocked/sandboxed responses for the external system(s) involved."
+            )
+
+        dependencies: list[str] = []
+        if "integration" in applicable_levels or "api" in applicable_levels:
+            dependencies.append(
+                "Availability of a stable sandbox/mocked endpoint for the external/"
+                "third-party system(s) referenced by this requirement."
+            )
+        if not dependencies:
+            dependencies.append("No external system dependencies were detected in the requirement text.")
+
+        if feasibility is not None:
+            summary = (
+                f"Test strategy for '{title}', informed by its feasibility study "
+                f"({scenario_count} scenario(s): {automatable_count} automatable, "
+                f"{manual_count} manual/needs-review). Levels in scope: "
+                f"{', '.join(sorted(applicable_levels | {'functional', 'regression'}))}."
+            )
+            automation_scope_notes = (
+                f"Automate the {automatable_count} scenario(s) the feasibility study "
+                "recommended for automation or hybrid execution, plus baseline functional "
+                "and regression coverage."
+            )
+            manual_scope_notes = (
+                f"Manually execute the {manual_count} scenario(s) the feasibility study "
+                "flagged as manual or needing review, prioritizing those with the highest "
+                "risk."
+            )
+        else:
+            summary = (
+                f"Test strategy for '{title}' (no approved feasibility study available yet). "
+                f"Levels in scope: {', '.join(sorted(applicable_levels | {'functional', 'regression'}))}."
+            )
+            automation_scope_notes = (
+                "Automate deterministic, rule-based flows identified in the functional level "
+                "once scenarios are defined."
+            )
+            manual_scope_notes = (
+                "Manually cover subjective/visual and external-system-dependent behavior "
+                "until a feasibility study narrows the scope further."
+            )
+
+        return TestStrategyPayload(
+            summary=summary,
+            levels=levels,
+            environments=environments,
+            test_data_requirements=test_data_requirements,
+            dependencies=dependencies,
+            automation_scope_notes=automation_scope_notes,
+            manual_scope_notes=manual_scope_notes,
+        )

@@ -1,11 +1,14 @@
-"""Requirement and AIAnalysis models (requirements domain).
+"""Requirement, AIAnalysis, FeasibilityStudy and TestStrategy models
+(requirements domain).
 
-AIAnalysis lives here rather than in `app.domains.ai` because the analysis
-*lifecycle* (draft/approve/reject, edit-while-draft, history of multiple
-analyses per requirement) is a requirements-domain concern tied 1:1 to a
-Requirement's own persistence and access control. The `ai` domain only
-supplies the analysis *content* (via `AIService`/`AIProvider`) used to
-populate a new AIAnalysis row - it has no database model of its own.
+AIAnalysis (Sprint 2) and FeasibilityStudy/TestStrategy (Sprint 3) all live
+here rather than in `app.domains.ai` because their *lifecycle*
+(draft/approve/reject, edit-while-draft, history of multiple records per
+requirement) is a requirements-domain concern tied 1:1 to a Requirement's own
+persistence and access control - same precedent as AIAnalysis. The `ai`
+domain only supplies the generated *content* (via `AIService`/`AIProvider`)
+used to populate a new draft row of any of these three - it has no database
+model of its own.
 """
 import enum
 import uuid
@@ -30,6 +33,18 @@ class RequirementPriority(str, enum.Enum):
 
 
 class AnalysisStatus(str, enum.Enum):
+    draft = "draft"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class FeasibilityStatus(str, enum.Enum):
+    draft = "draft"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class StrategyStatus(str, enum.Enum):
     draft = "draft"
     approved = "approved"
     rejected = "rejected"
@@ -70,6 +85,12 @@ class Requirement(Base):
 
     analyses: Mapped[list["AIAnalysis"]] = relationship(
         "AIAnalysis", back_populates="requirement", cascade="all, delete-orphan"
+    )
+    feasibility_studies: Mapped[list["FeasibilityStudy"]] = relationship(
+        "FeasibilityStudy", back_populates="requirement", cascade="all, delete-orphan"
+    )
+    test_strategies: Mapped[list["TestStrategy"]] = relationship(
+        "TestStrategy", back_populates="requirement", cascade="all, delete-orphan"
     )
 
 
@@ -114,3 +135,83 @@ class AIAnalysis(Base):
     sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
 
     requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="analyses")
+
+
+class FeasibilityStudy(Base):
+    __tablename__ = "feasibility_studies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("requirements.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[FeasibilityStatus] = mapped_column(
+        SAEnum(
+            FeasibilityStatus,
+            name="feasibility_status",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+        default=FeasibilityStatus.draft,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Same monotonic-ordering trick as AIAnalysis.sequence - see that column's
+    # docstring for why `created_at` alone is not safe to order/rank by.
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="feasibility_studies")
+
+
+class TestStrategy(Base):
+    __tablename__ = "test_strategies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("requirements.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[StrategyStatus] = mapped_column(
+        SAEnum(
+            StrategyStatus, name="strategy_status", values_callable=lambda e: [m.value for m in e]
+        ),
+        nullable=False,
+        default=StrategyStatus.draft,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Same monotonic-ordering trick as AIAnalysis.sequence - see that column's
+    # docstring for why `created_at` alone is not safe to order/rank by.
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="test_strategies")

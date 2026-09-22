@@ -1,18 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { App as AntApp, Button, Card, Form, Modal, Popconfirm, Skeleton, Space, Typography } from 'antd';
 import {
-  App as AntApp,
-  Button,
-  Card,
-  Collapse,
-  Empty,
-  Form,
-  Modal,
-  Popconfirm,
-  Skeleton,
-  Space,
-  Typography,
-} from 'antd';
-import { DeleteOutlined, EditOutlined, ThunderboltOutlined } from '@ant-design/icons';
+  ApartmentOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  ExperimentOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useDeleteRequirement, useRequirement, useUpdateRequirement } from '../../hooks/useRequirements';
 import {
@@ -23,13 +17,39 @@ import {
   useRejectAnalysis,
   useUpdateAnalysis,
 } from '../../hooks/useAnalyses';
+import {
+  useApproveFeasibility,
+  useCreateFeasibility,
+  useFeasibilities,
+  useFeasibility,
+  useRejectFeasibility,
+  useUpdateFeasibility,
+} from '../../hooks/useFeasibility';
+import {
+  useApproveStrategy,
+  useCreateStrategy,
+  useRejectStrategy,
+  useStrategies,
+  useStrategy,
+  useUpdateStrategy,
+} from '../../hooks/useStrategy';
 import { useProjects } from '../../hooks/useProjects';
 import { StatusBadge } from '../../components/StatusBadge';
-import { ApprovalPanel } from '../../components/ApprovalPanel';
+import { ReviewSection } from '../../components/ReviewSection';
 import { ApiError } from '../../api/client';
-import type { Analysis, RequirementAnalysisPayload, RequirementUpdateInput } from '../../api/types';
+import type {
+  AnalysisDetail,
+  FeasibilityDetail,
+  RequirementAnalysisPayload,
+  RequirementUpdateInput,
+  FeasibilityStudyPayload,
+  StrategyDetail,
+  TestStrategyPayload,
+} from '../../api/types';
 import { RequirementFormFields } from './RequirementFormFields';
 import { AnalysisPayloadView } from './AnalysisPayloadView';
+import { FeasibilityPayloadView } from './FeasibilityPayloadView';
+import { TestStrategyPayloadView } from './TestStrategyPayloadView';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -46,115 +66,6 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   );
 }
 
-/** The most recent analysis: fully editable while draft, with approve/reject. */
-function CurrentAnalysisPanel({
-  projectId,
-  requirementId,
-  analysis,
-  canReview,
-}: {
-  projectId: string;
-  requirementId: string;
-  analysis: Analysis;
-  canReview: boolean;
-}) {
-  const { data: detail, isLoading } = useAnalysis(projectId, requirementId, analysis.id);
-  const [draft, setDraft] = useState<RequirementAnalysisPayload | null>(null);
-  const updateAnalysis = useUpdateAnalysis(projectId, requirementId, analysis.id);
-  const approveAnalysis = useApproveAnalysis(projectId, requirementId, analysis.id);
-  const rejectAnalysis = useRejectAnalysis(projectId, requirementId, analysis.id);
-  const { message } = AntApp.useApp();
-
-  useEffect(() => {
-    if (detail) setDraft(detail.payload);
-  }, [detail]);
-
-  if (isLoading || !detail || !draft) {
-    return <Skeleton active paragraph={{ rows: 4 }} />;
-  }
-
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(detail.payload);
-  const editable = canReview && detail.status === 'draft';
-
-  const handleSave = async () => {
-    try {
-      await updateAnalysis.mutateAsync(draft);
-      message.success('Analysis updated');
-    } catch (err) {
-      if (err instanceof ApiError) message.error(err.detail);
-    }
-  };
-
-  const guardDirty = () => {
-    if (isDirty) {
-      message.warning('Save your changes before approving or rejecting.');
-      return true;
-    }
-    return false;
-  };
-
-  const handleApprove = async () => {
-    if (guardDirty()) return;
-    try {
-      await approveAnalysis.mutateAsync();
-      message.success('Analysis approved');
-    } catch (err) {
-      if (err instanceof ApiError) message.error(err.detail);
-    }
-  };
-
-  const handleReject = async () => {
-    if (guardDirty()) return;
-    try {
-      await rejectAnalysis.mutateAsync();
-      message.success('Analysis rejected');
-    } catch (err) {
-      if (err instanceof ApiError) message.error(err.detail);
-    }
-  };
-
-  return (
-    <ApprovalPanel
-      status={detail.status}
-      createdAt={detail.created_at}
-      approvedAt={detail.approved_at}
-      canEdit={editable}
-      canReview={editable}
-      isDirty={isDirty}
-      saving={updateAnalysis.isPending}
-      approving={approveAnalysis.isPending}
-      rejecting={rejectAnalysis.isPending}
-      onSave={handleSave}
-      onApprove={handleApprove}
-      onReject={handleReject}
-    >
-      <AnalysisPayloadView payload={draft} editable={editable} onChange={setDraft} />
-    </ApprovalPanel>
-  );
-}
-
-/** A prior analysis in the history list — read-only, payload lazy-loaded on expand. */
-function HistoryAnalysisBody({
-  projectId,
-  requirementId,
-  analysisId,
-  active,
-}: {
-  projectId: string;
-  requirementId: string;
-  analysisId: string;
-  active: boolean;
-}) {
-  const { data, isLoading } = useAnalysis(projectId, requirementId, analysisId, { enabled: active });
-  if (!active) return null;
-  if (isLoading || !data) return <Skeleton active paragraph={{ rows: 3 }} />;
-  return (
-    <ApprovalPanel status={data.status} createdAt={data.created_at} approvedAt={data.approved_at} canEdit={false} canReview={false}>
-      <AnalysisPayloadView payload={data.payload} editable={false} onChange={() => {}} />
-    </ApprovalPanel>
-  );
-}
-
 export default function RequirementDetailPage() {
   const { projectId, requirementId } = useParams();
   const navigate = useNavigate();
@@ -162,13 +73,25 @@ export default function RequirementDetailPage() {
   const { data: projects } = useProjects();
   const updateRequirement = useUpdateRequirement(projectId, requirementId);
   const deleteRequirement = useDeleteRequirement(projectId);
+  const { message } = AntApp.useApp();
+
+  // AI Analysis
   const { data: analyses, isLoading: analysesLoading } = useAnalyses(projectId, requirementId);
   const createAnalysis = useCreateAnalysis(projectId, requirementId);
-  const { message } = AntApp.useApp();
+
+  // Feasibility Study
+  const { data: feasibilityStudies, isLoading: feasibilityLoading } = useFeasibilities(
+    projectId,
+    requirementId,
+  );
+  const createFeasibility = useCreateFeasibility(projectId, requirementId);
+
+  // Test Strategy
+  const { data: strategies, isLoading: strategiesLoading } = useStrategies(projectId, requirementId);
+  const createStrategy = useCreateStrategy(projectId, requirementId);
 
   const [editOpen, setEditOpen] = useState(false);
   const [form] = Form.useForm<RequirementUpdateInput>();
-  const [historyActiveKeys, setHistoryActiveKeys] = useState<string[]>([]);
 
   const myRole = projects?.find((p) => p.id === projectId)?.role;
   const canEdit = myRole === 'admin' || myRole === 'member';
@@ -217,11 +140,49 @@ export default function RequirementDetailPage() {
     }
   };
 
+  const handleRunFeasibility = async () => {
+    try {
+      await createFeasibility.mutateAsync();
+      message.success('Feasibility study started');
+    } catch (err) {
+      if (err instanceof ApiError) message.error(err.detail);
+    }
+  };
+
+  const handleGenerateStrategy = async () => {
+    try {
+      await createStrategy.mutateAsync();
+      message.success('Test strategy started');
+    } catch (err) {
+      if (err instanceof ApiError) message.error(err.detail);
+    }
+  };
+
+  // Named `use*` wrappers (not inline arrows) so eslint-plugin-react-hooks
+  // recognizes these as hooks rather than plain callbacks when passed as
+  // props to ReviewSection.
+  const useAnalysisDetail = (id: string | undefined, opts?: { enabled?: boolean }) =>
+    useAnalysis(projectId, requirementId, id, opts);
+  const useAnalysisUpdate = (id: string | undefined) => useUpdateAnalysis(projectId, requirementId, id);
+  const useAnalysisApprove = (id: string | undefined) => useApproveAnalysis(projectId, requirementId, id);
+  const useAnalysisReject = (id: string | undefined) => useRejectAnalysis(projectId, requirementId, id);
+
+  const useFeasibilityDetail = (id: string | undefined, opts?: { enabled?: boolean }) =>
+    useFeasibility(projectId, requirementId, id, opts);
+  const useFeasibilityUpdate = (id: string | undefined) => useUpdateFeasibility(projectId, requirementId, id);
+  const useFeasibilityApprove = (id: string | undefined) =>
+    useApproveFeasibility(projectId, requirementId, id);
+  const useFeasibilityReject = (id: string | undefined) => useRejectFeasibility(projectId, requirementId, id);
+
+  const useStrategyDetail = (id: string | undefined, opts?: { enabled?: boolean }) =>
+    useStrategy(projectId, requirementId, id, opts);
+  const useStrategyUpdate = (id: string | undefined) => useUpdateStrategy(projectId, requirementId, id);
+  const useStrategyApprove = (id: string | undefined) => useApproveStrategy(projectId, requirementId, id);
+  const useStrategyReject = (id: string | undefined) => useRejectStrategy(projectId, requirementId, id);
+
   if (isLoading || !requirement) {
     return <Skeleton active paragraph={{ rows: 6 }} />;
   }
-
-  const [latest, ...history] = analyses ?? [];
 
   return (
     <div>
@@ -259,67 +220,71 @@ export default function RequirementDetailPage() {
         <Field label="Acceptance criteria" value={requirement.acceptance_criteria} />
       </Card>
 
-      <div style={{ marginTop: 24, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0 }}>
-          AI Analysis
-        </Title>
-        {canEdit && (
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleAnalyze} loading={createAnalysis.isPending}>
-            Analyze
-          </Button>
+      <ReviewSection<RequirementAnalysisPayload, AnalysisDetail>
+        title="AI Analysis"
+        generateLabel="Analyze"
+        generateIcon={<ThunderboltOutlined />}
+        onGenerate={handleAnalyze}
+        generating={createAnalysis.isPending}
+        canEdit={canEdit}
+        items={analyses}
+        itemsLoading={analysesLoading}
+        emptyEditableText="No analysis yet — click Analyze to generate an AI review of this requirement."
+        emptyReadonlyText="No analysis yet."
+        historyTitle="Analysis History"
+        itemName="Analysis"
+        useDetail={useAnalysisDetail}
+        useUpdate={useAnalysisUpdate}
+        useApprove={useAnalysisApprove}
+        useReject={useAnalysisReject}
+        renderPayload={(payload, editable, onChange) => (
+          <AnalysisPayloadView payload={payload} editable={editable} onChange={onChange} />
         )}
-      </div>
+      />
 
-      <Card>
-        {analysesLoading ? (
-          <Skeleton active paragraph={{ rows: 4 }} />
-        ) : !latest ? (
-          <Empty
-            description={
-              canEdit
-                ? 'No analysis yet — click Analyze to generate an AI review of this requirement.'
-                : 'No analysis yet.'
-            }
-          />
-        ) : (
-          projectId &&
-          requirementId && (
-            <CurrentAnalysisPanel
-              projectId={projectId}
-              requirementId={requirementId}
-              analysis={latest}
-              canReview={canEdit}
-            />
-          )
+      <ReviewSection<FeasibilityStudyPayload, FeasibilityDetail>
+        title="Feasibility Study"
+        generateLabel="Run Feasibility Study"
+        generateIcon={<ExperimentOutlined />}
+        onGenerate={handleRunFeasibility}
+        generating={createFeasibility.isPending}
+        canEdit={canEdit}
+        items={feasibilityStudies}
+        itemsLoading={feasibilityLoading}
+        emptyEditableText="No feasibility study yet — click Run Feasibility Study to generate an AI assessment of automation feasibility."
+        emptyReadonlyText="No feasibility study yet."
+        historyTitle="Feasibility Study History"
+        itemName="Feasibility study"
+        useDetail={useFeasibilityDetail}
+        useUpdate={useFeasibilityUpdate}
+        useApprove={useFeasibilityApprove}
+        useReject={useFeasibilityReject}
+        renderPayload={(payload, editable, onChange) => (
+          <FeasibilityPayloadView payload={payload} editable={editable} onChange={onChange} />
         )}
-      </Card>
+      />
 
-      {history.length > 0 && projectId && requirementId && (
-        <div style={{ marginTop: 24 }}>
-          <Title level={5}>Analysis History</Title>
-          <Collapse
-            activeKey={historyActiveKeys}
-            onChange={(keys) => setHistoryActiveKeys(Array.isArray(keys) ? keys : [keys])}
-            items={history.map((a) => ({
-              key: a.id,
-              label: (
-                <Space>
-                  <StatusBadge status={a.status} />
-                  <Text type="secondary">{new Date(a.created_at).toLocaleString()}</Text>
-                </Space>
-              ),
-              children: (
-                <HistoryAnalysisBody
-                  projectId={projectId}
-                  requirementId={requirementId}
-                  analysisId={a.id}
-                  active={historyActiveKeys.includes(a.id)}
-                />
-              ),
-            }))}
-          />
-        </div>
-      )}
+      <ReviewSection<TestStrategyPayload, StrategyDetail>
+        title="Test Strategy"
+        generateLabel="Generate Test Strategy"
+        generateIcon={<ApartmentOutlined />}
+        onGenerate={handleGenerateStrategy}
+        generating={createStrategy.isPending}
+        canEdit={canEdit}
+        items={strategies}
+        itemsLoading={strategiesLoading}
+        emptyEditableText="No test strategy yet — click Generate Test Strategy to generate an AI-recommended testing approach."
+        emptyReadonlyText="No test strategy yet."
+        historyTitle="Test Strategy History"
+        itemName="Test strategy"
+        useDetail={useStrategyDetail}
+        useUpdate={useStrategyUpdate}
+        useApprove={useStrategyApprove}
+        useReject={useStrategyReject}
+        renderPayload={(payload, editable, onChange) => (
+          <TestStrategyPayloadView payload={payload} editable={editable} onChange={onChange} />
+        )}
+      />
 
       {canEdit && (
         <Modal

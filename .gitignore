@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
 venv/
 *.egg-info/
 .pytest_cache/
@@ -35,3 +36,8 @@ Thumbs.db
 
 # Docker volumes (local dev data)
 pgdata/
+
+# Local scratch/dev-only helper scripts
+backend/.dev_pg_daemon.py
+backend/.verify_*
+frontend/.verify_*

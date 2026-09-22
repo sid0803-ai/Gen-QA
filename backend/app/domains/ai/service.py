@@ -4,7 +4,12 @@ for now (Sprint 2); a real LLM-backed provider can be swapped in here later
 without any caller (`app.domains.requirements.service`) needing to change.
 """
 from app.domains.ai.provider import AIProvider, MockAIProvider
-from app.domains.ai.schemas import RequirementAnalysisPayload, RequirementInput
+from app.domains.ai.schemas import (
+    FeasibilityStudyPayload,
+    RequirementAnalysisPayload,
+    RequirementInput,
+    TestStrategyPayload,
+)
 
 
 class AIService:
@@ -18,3 +23,13 @@ class AIService:
         # plain dict (e.g. parsed straight from an LLM response) is
         # guaranteed to come back validated from here too.
         return RequirementAnalysisPayload.model_validate(result)
+
+    def feasibility_study(self, requirement: RequirementInput) -> FeasibilityStudyPayload:
+        result = self._provider.feasibility_study(requirement)
+        return FeasibilityStudyPayload.model_validate(result)
+
+    def generate_test_strategy(
+        self, requirement: RequirementInput, feasibility: FeasibilityStudyPayload | None = None
+    ) -> TestStrategyPayload:
+        result = self._provider.generate_test_strategy(requirement, feasibility)
+        return TestStrategyPayload.model_validate(result)

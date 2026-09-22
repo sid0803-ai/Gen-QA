@@ -56,6 +56,14 @@ export type AnalysisStatus = 'draft' | 'approved' | 'rejected';
 /** Analysis status as surfaced on a requirement list row — includes "none". */
 export type LatestAnalysisStatus = 'none' | AnalysisStatus;
 
+export type FeasibilityStatus = 'draft' | 'approved' | 'rejected';
+/** Feasibility status as surfaced on a requirement row — includes "none". */
+export type LatestFeasibilityStatus = 'none' | FeasibilityStatus;
+
+export type StrategyStatus = 'draft' | 'approved' | 'rejected';
+/** Test strategy status as surfaced on a requirement row — includes "none". */
+export type LatestStrategyStatus = 'none' | StrategyStatus;
+
 export interface Requirement {
   id: string;
   project_id: string;
@@ -67,6 +75,9 @@ export interface Requirement {
   created_by: string;
   created_at: string;
   updated_at: string;
+  latest_analysis_status: LatestAnalysisStatus;
+  latest_feasibility_status: LatestFeasibilityStatus;
+  latest_strategy_status: LatestStrategyStatus;
 }
 
 /** Shape returned by GET /projects/{id}/requirements (list form, no description). */
@@ -75,6 +86,8 @@ export interface RequirementSummary {
   title: string;
   priority: Priority;
   latest_analysis_status: LatestAnalysisStatus;
+  latest_feasibility_status: LatestFeasibilityStatus;
+  latest_strategy_status: LatestStrategyStatus;
   created_at: string;
 }
 
@@ -137,4 +150,79 @@ export interface Analysis {
 /** Shape returned by create/get-one/patch/approve/reject — includes `payload`. */
 export interface AnalysisDetail extends Analysis {
   payload: RequirementAnalysisPayload;
+}
+
+export type FeasibilityRecommendation = 'automate' | 'manual' | 'hybrid' | 'needs_review';
+
+export interface FeasibilityScenario {
+  title: string;
+  description: string;
+  recommendation: FeasibilityRecommendation;
+  reason: string;
+  overridden_recommendation: FeasibilityRecommendation | null;
+}
+
+export interface FeasibilityStudyPayload {
+  summary: string;
+  scenarios: FeasibilityScenario[];
+}
+
+/** Shape returned by the feasibility list endpoint — omits `payload`. */
+export interface Feasibility {
+  id: string;
+  requirement_id: string;
+  status: FeasibilityStatus;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  updated_at: string;
+}
+
+/** Shape returned by create/get-one/patch/approve/reject — includes `payload`. */
+export interface FeasibilityDetail extends Feasibility {
+  payload: FeasibilityStudyPayload;
+}
+
+export type TestingLevel =
+  | 'functional'
+  | 'api'
+  | 'ui'
+  | 'integration'
+  | 'security'
+  | 'performance'
+  | 'regression';
+
+export interface TestingLevelScope {
+  level: TestingLevel;
+  applicable: boolean;
+  estimated_scenario_count: number;
+  notes: string;
+}
+
+export interface TestStrategyPayload {
+  summary: string;
+  levels: TestingLevelScope[];
+  environments: string[];
+  test_data_requirements: string[];
+  dependencies: string[];
+  automation_scope_notes: string;
+  manual_scope_notes: string;
+}
+
+/** Shape returned by the test strategy list endpoint — omits `payload`. */
+export interface Strategy {
+  id: string;
+  requirement_id: string;
+  status: StrategyStatus;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  updated_at: string;
+}
+
+/** Shape returned by create/get-one/patch/approve/reject — includes `payload`. */
+export interface StrategyDetail extends Strategy {
+  payload: TestStrategyPayload;
 }

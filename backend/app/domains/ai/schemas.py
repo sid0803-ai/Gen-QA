@@ -50,3 +50,52 @@ class RequirementAnalysisPayload(BaseModel):
     edge_cases: list[RationaleItem] = Field(default_factory=list)
     automation_candidates: list[RationaleItem] = Field(default_factory=list)
     manual_candidates: list[RationaleItem] = Field(default_factory=list)
+
+
+# --- Feasibility Study (Sprint 3) -------------------------------------------
+#
+# `FeasibilityStudyPayload` is the JSON shape stored in
+# `FeasibilityStudy.payload` (requirements domain), mirroring how
+# `RequirementAnalysisPayload` backs `AIAnalysis.payload`.
+
+
+class FeasibilityScenario(BaseModel):
+    title: str
+    description: str
+    recommendation: Literal["automate", "manual", "hybrid", "needs_review"]
+    reason: str
+    # Human override: starts as None (meaning "use `recommendation`") and is
+    # set independently by a human reviewer before approval. `recommendation`
+    # (the AI's original suggestion) is never overwritten, so the two stay
+    # visible side by side for comparison.
+    overridden_recommendation: Literal["automate", "manual", "hybrid", "needs_review"] | None = None
+
+
+class FeasibilityStudyPayload(BaseModel):
+    summary: str
+    scenarios: list[FeasibilityScenario] = Field(default_factory=list)
+
+
+# --- Test Strategy (Sprint 3) ------------------------------------------------
+#
+# `TestStrategyPayload` is the JSON shape stored in `TestStrategy.payload`
+# (requirements domain).
+
+
+class TestingLevelScope(BaseModel):
+    level: Literal[
+        "functional", "api", "ui", "integration", "security", "performance", "regression"
+    ]
+    applicable: bool
+    estimated_scenario_count: int
+    notes: str
+
+
+class TestStrategyPayload(BaseModel):
+    summary: str
+    levels: list[TestingLevelScope] = Field(default_factory=list)
+    environments: list[str] = Field(default_factory=list)
+    test_data_requirements: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    automation_scope_notes: str
+    manual_scope_notes: str

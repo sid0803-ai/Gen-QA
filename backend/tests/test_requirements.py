@@ -108,9 +108,19 @@ async def test_list_requirements_shape_and_latest_status_none(
     items = resp.json()
     assert len(items) == 1
     item = items[0]
-    assert set(item.keys()) == {"id", "title", "priority", "latest_analysis_status", "created_at"}
+    assert set(item.keys()) == {
+        "id",
+        "title",
+        "priority",
+        "latest_analysis_status",
+        "latest_feasibility_status",
+        "latest_strategy_status",
+        "created_at",
+    }
     assert item["title"] == "Req A"
     assert item["latest_analysis_status"] == "none"
+    assert item["latest_feasibility_status"] == "none"
+    assert item["latest_strategy_status"] == "none"
 
 
 async def test_list_requirements_viewer_can_read(

@@ -1,29 +1,47 @@
-# Gen-QA Backend — Sprint 1 + Sprint 2
+# Gen-QA Backend — Sprint 1 + Sprint 2 + Sprint 3
 
-FastAPI modular-monolith backend. Sprint 1 implemented two domains, Sprint 2 adds two
-more:
+FastAPI modular-monolith backend. Sprint 1 implemented two domains, Sprint 2 added two
+more, and Sprint 3 extends the `requirements`/`ai` domains with the next two steps in
+the pipeline (Feasibility Study, Test Strategy):
 
 - **identity** (Sprint 1) — user registration, login (OAuth2 password flow), JWT
   access/refresh tokens, `GET /auth/me`.
 - **projects** (Sprint 1) — projects and project membership (roles: `admin` >
   `member` > `viewer`), with project membership as the sole data-isolation boundary.
-- **requirements** (Sprint 2) — project-scoped requirements (title, description,
-  business objective, acceptance criteria, priority) and their AI-analysis lifecycle
-  (`ai_analyses`: draft → approved/rejected, editable while draft).
-- **ai** (Sprint 2) — the `AIProvider` abstraction + `AIService` that generates a
-  structured `RequirementAnalysisPayload` for a requirement. Only a `MockAIProvider`
-  (keyword-heuristic, no real LLM call) exists so far; a real provider can be added
-  later without changing any caller. This domain has no database model of its own —
-  `AIAnalysis` (the persisted result) lives in the `requirements` domain, since its
-  lifecycle (draft/approve/reject, edit-while-draft, multi-analysis history) is a
-  requirements-domain concern.
+- **requirements** (Sprint 2, extended Sprint 3) — project-scoped requirements
+  (title, description, business objective, acceptance criteria, priority) and three
+  parallel AI-assisted review lifecycles hanging off each requirement, all sharing the
+  same draft → approved/rejected shape (editable while draft): `ai_analyses`
+  (Sprint 2), `feasibility_studies` and `test_strategies` (Sprint 3).
+- **ai** (Sprint 2, extended Sprint 3) — the `AIProvider` abstraction + `AIService`
+  that generates a structured payload for a requirement: `RequirementAnalysisPayload`
+  (Sprint 2), and `FeasibilityStudyPayload` / `TestStrategyPayload` (Sprint 3). Only a
+  `MockAIProvider` (keyword-heuristic, no real LLM call) exists so far; a real
+  provider can be added later without changing any caller. This domain has no
+  database model of its own — `AIAnalysis`/`FeasibilityStudy`/`TestStrategy` (the
+  persisted results) all live in the `requirements` domain, since their lifecycle
+  (draft/approve/reject, edit-while-draft, multi-record history) is a
+  requirements-domain concern, not an ai-domain one.
 
-Every future domain (test cases, executions, ...) will be added the same way:
+Every future domain (test design, executions, ...) will be added the same way:
 `app/domains/<name>/{models,schemas,service,router}.py`, mounted under `/api/v1` in
 `app/main.py`, and — if it stores project-scoped data — reading/writing through a
 `repository.py` that always takes `project_id` + the requesting user's id and
 enforces membership via `app.domains.projects.repository.require_membership` (or the
 `require_project_role` dependency in `app/core/deps.py`).
+
+**Sprint 3 domain-placement decision**: `FeasibilityStudy` and `TestStrategy` were
+added as two more tables/model classes inside `app/domains/requirements/` (models,
+repository, schemas, service, router), exactly alongside `AIAnalysis` rather than in
+a new `app/domains/feasibility/` or `app/domains/strategy/`. This directly follows
+Sprint 2's own precedent and stated rationale (see above): the interesting complexity
+of these records is the human-review lifecycle tied 1:1 to a requirement's own
+access control, not the AI generation step itself (which stays entirely inside
+`app.domains.ai`). Splitting them into their own domains would have meant either
+duplicating the requirement-membership-check plumbing three times or introducing
+cross-domain repository calls for no real isolation benefit, since a
+`FeasibilityStudy`/`TestStrategy` can never be read/written independently of "the
+Requirement it belongs to, inside a Project the caller is a member of."
 
 ## Stack
 
@@ -44,10 +62,12 @@ backend/
     domains/
       identity/                  User model, auth endpoints
       projects/                  Project, ProjectMember, membership-enforced repository
-      requirements/               Requirement + AIAnalysis models, CRUD + analysis lifecycle
+      requirements/               Requirement + AIAnalysis + FeasibilityStudy + TestStrategy
+                                    models, CRUD + all three review lifecycles
       ai/                          AIProvider ABC, MockAIProvider, AIService
   alembic/                       Migrations
-  tests/                         pytest suite (incl. test_project_isolation.py)
+  tests/                         pytest suite (incl. test_project_isolation.py,
+                                   test_feasibility.py, test_strategy.py)
   Dockerfile
   requirements.txt / requirements-dev.txt
   .env.example
@@ -173,9 +193,9 @@ Base path: `/api/v1`
 **Requirements** (nested under a project; roles as above — `viewer` reads, `member`
 create/update, `admin` delete)
 - `POST /projects/{id}/requirements` — `{title, description, business_objective?, acceptance_criteria?, priority?}` (`priority` defaults `medium`) → 201 full requirement.
-- `GET /projects/{id}/requirements` → 200 list `[{id, title, priority, latest_analysis_status, created_at}]`. `latest_analysis_status` is `"none"` | `"draft"` | `"approved"` | `"rejected"`, derived from the most recently *created* `AIAnalysis` for that requirement (ties broken by an internal DB-generated monotonic sequence, not by `created_at` alone — see `AIAnalysis.sequence` in `app/domains/requirements/models.py`).
-- `GET /projects/{id}/requirements/{req_id}` → 200 full requirement; 404 if not found or not a member (never leaks existence).
-- `PATCH /projects/{id}/requirements/{req_id}` — any subset of `{title, description, business_objective, acceptance_criteria, priority}` → 200 updated.
+- `GET /projects/{id}/requirements` → 200 list `[{id, title, priority, latest_analysis_status, latest_feasibility_status, latest_strategy_status, created_at}]`. Each `latest_*_status` is `"none"` | `"draft"` | `"approved"` | `"rejected"`, derived from the most recently *created* record of that kind for the requirement (`AIAnalysis`/`FeasibilityStudy`/`TestStrategy` respectively; ties broken by an internal DB-generated monotonic sequence, not by `created_at` alone — see `.sequence` on each model in `app/domains/requirements/models.py`).
+- `GET /projects/{id}/requirements/{req_id}` → 200 full requirement, which (Sprint 3) also includes `latest_feasibility_status`/`latest_strategy_status` (same semantics as above) - 404 if not found or not a member (never leaks existence). Note: unlike the list endpoint, this endpoint does *not* include `latest_analysis_status` - that was Sprint 2's own scope choice for the list endpoint only, left as-is; Sprint 3 only added the two fields the spec asked for here.
+- `PATCH /projects/{id}/requirements/{req_id}` — any subset of `{title, description, business_objective, acceptance_criteria, priority}` → 200 updated (same `latest_feasibility_status`/`latest_strategy_status` fields as the detail response above).
 - `DELETE /projects/{id}/requirements/{req_id}` — admin only → 204.
 
 **AI Analysis** (nested under a requirement; `member`/`admin` can trigger/edit/approve/reject, `viewer` can read)
@@ -191,6 +211,28 @@ The `RequirementAnalysisPayload` shape (`app/domains/ai/schemas.py`): `summary` 
 `manual_candidates` (lists of `{statement, rationale}`), `risks` (list of
 `{statement, rationale, severity: low|medium|high}`), `ambiguities` (list of
 `{statement, clarifying_question}`), `missing_information` (list of str).
+
+**Feasibility Study** (Sprint 3; nested under a requirement, same role rules as
+Analysis: `member`/`admin` trigger/edit/approve/reject, `viewer` reads) — identical
+shape/lifecycle to AI Analysis, at `/projects/{id}/requirements/{req_id}/feasibility`
+(and `/feasibility/{feasibility_id}`, `/feasibility/{feasibility_id}/approve`,
+`/feasibility/{feasibility_id}/reject`), backed by `MockAIProvider.feasibility_study`
+and the `FeasibilityStudyPayload` shape: `summary` (str), `scenarios` (list of
+`{title, description, recommendation: automate|manual|hybrid|needs_review, reason,
+overridden_recommendation}`). `overridden_recommendation` starts `null` and is how a
+human reviewer records their own call on a scenario via `PATCH` *without* overwriting
+the AI's original `recommendation` - both stay visible side by side.
+
+**Test Strategy** (Sprint 3; same nesting/role rules, path segment `strategy`) — same
+shape/lifecycle again, at `/projects/{id}/requirements/{req_id}/strategy`, backed by
+`MockAIProvider.generate_test_strategy` and the `TestStrategyPayload` shape: `summary`
+(str), `levels` (list of `{level: functional|api|ui|integration|security|performance|regression,
+applicable: bool, estimated_scenario_count: int, notes}`), `environments` /
+`test_data_requirements` / `dependencies` (lists of str), `automation_scope_notes` /
+`manual_scope_notes` (str). Generating a test strategy is **not** blocked on an
+approved feasibility study existing: if one does, its payload is passed to the
+provider as extra context (referenced in the generated summary/scope notes); if none
+exists, generation proceeds anyway with `None` in its place.
 
 ## Deviations from the original spec
 
@@ -213,4 +255,36 @@ The `RequirementAnalysisPayload` shape (`app/domains/ai/schemas.py`): `summary` 
   an omitted field and an explicit `null` are both treated as "leave unchanged."
   Nullable fields (`business_objective`, `acceptance_criteria`) can only be set to a
   value, not cleared back to `null`, via this endpoint.
+- **(Sprint 3) `FeasibilityStudy`/`TestStrategy` each carry their own internal
+  `sequence` column**, same trick and same reason as `AIAnalysis.sequence` (Sprint
+  2's fix - see above). Two independent `IDENTITY` sequences (one per table), not a
+  shared one, since "latest across kinds" is never a query this app needs to make.
+- **(Sprint 3) `latest_feasibility_status`/`latest_strategy_status` were added to the
+  single-requirement `GET`/`PATCH`/`POST` responses, but `latest_analysis_status` was
+  not.** The spec asked for exactly this (mirror the list endpoint's `latest_analysis_status`
+  computation, but only add the two new fields to the detail responses), so the
+  detail response is intentionally asymmetric with the list response here - list has
+  all three, detail has two. Not fixed unilaterally since Sprint 2's analyses
+  endpoints/response shape were explicitly off-limits to modify this sprint.
+- **(Sprint 3) `FeasibilityScenario.overridden_recommendation` is never mutated by the
+  server** - `POST .../feasibility` always creates scenarios with it `null` (equal to
+  "no override yet"); a human sets it via `PATCH` by sending back the whole edited
+  payload, same edit-while-draft mechanism Sprint 2 established for `AIAnalysis`.
 - Everything else follows the spec's API contract and architecture as written.
+
+## Known pre-existing issue found during Sprint 3 verification (not fixed - out of scope)
+
+While verifying the new migration's downgrade/upgrade round trip, a full
+`alembic downgrade base` followed by `alembic upgrade head` was also tried (beyond
+what the task required) and failed with `type "project_role" already exists`. This is
+because Sprint 1's initial migration (`e135be9b9778`) drops the `projects`/
+`project_members` tables in `downgrade()` but never drops the Postgres ENUM types
+backing them (`project_role`, and likely others) - the same class of bug Sprint 2
+fixed for its own migration's enums, and this sprint fixed for its own
+(`feasibility_status`/`strategy_status`). Sprint 1's migration was left untouched per
+this sprint's explicit "don't modify identity/projects" instruction; a full
+`downgrade base` was never exercised by either prior sprint's own verification, so
+this pre-existing gap was previously latent. **This sprint's own migration
+(`da6737a9255c`) was verified clean for the round trip that matters** (`downgrade -1`
+then `upgrade head`, straight after `upgrade head`), which is what Sprint 3's task
+required.

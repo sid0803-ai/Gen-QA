@@ -67,7 +67,21 @@ export default function RequirementsListPage() {
       title: 'Analysis',
       dataIndex: 'latest_analysis_status',
       key: 'latest_analysis_status',
-      width: 160,
+      width: 140,
+      render: (status: string) => <StatusBadge status={status} />,
+    },
+    {
+      title: 'Feasibility',
+      dataIndex: 'latest_feasibility_status',
+      key: 'latest_feasibility_status',
+      width: 140,
+      render: (status: string) => <StatusBadge status={status} />,
+    },
+    {
+      title: 'Strategy',
+      dataIndex: 'latest_strategy_status',
+      key: 'latest_strategy_status',
+      width: 140,
       render: (status: string) => <StatusBadge status={status} />,
     },
     {
