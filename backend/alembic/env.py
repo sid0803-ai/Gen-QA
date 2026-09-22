@@ -16,7 +16,12 @@ from app.domains.identity import models as identity_models  # noqa: F401
 from app.domains.projects import models as projects_models  # noqa: F401
 from app.domains.requirements import models as requirements_models  # noqa: F401
 # app.domains.requirements.models also registers FeasibilityStudy/TestStrategy
-# (Sprint 3), so no separate import is needed for those.
+# (Sprint 3) and TestDesign (Sprint 4), so no separate import is needed for
+# those.
+from app.domains.testcases import models as testcases_models  # noqa: F401
+# Sprint 4: TestCase/TestCaseVersion/TestCaseCounter (testcases domain).
+# Imported after requirements_models since TestCase.test_design_id FKs to
+# requirements' test_designs table.
 
 # this is the Alembic Config object, which provides access to values within
 # the .ini file in use.

@@ -64,6 +64,10 @@ export type StrategyStatus = 'draft' | 'approved' | 'rejected';
 /** Test strategy status as surfaced on a requirement row — includes "none". */
 export type LatestStrategyStatus = 'none' | StrategyStatus;
 
+export type TestDesignStatus = 'draft' | 'approved' | 'rejected';
+/** Test design status as surfaced on a requirement row — includes "none". */
+export type LatestTestDesignStatus = 'none' | TestDesignStatus;
+
 export interface Requirement {
   id: string;
   project_id: string;
@@ -78,6 +82,7 @@ export interface Requirement {
   latest_analysis_status: LatestAnalysisStatus;
   latest_feasibility_status: LatestFeasibilityStatus;
   latest_strategy_status: LatestStrategyStatus;
+  latest_test_design_status: LatestTestDesignStatus;
 }
 
 /** Shape returned by GET /projects/{id}/requirements (list form, no description). */
@@ -88,6 +93,7 @@ export interface RequirementSummary {
   latest_analysis_status: LatestAnalysisStatus;
   latest_feasibility_status: LatestFeasibilityStatus;
   latest_strategy_status: LatestStrategyStatus;
+  latest_test_design_status: LatestTestDesignStatus;
   created_at: string;
 }
 
@@ -225,4 +231,138 @@ export interface Strategy {
 /** Shape returned by create/get-one/patch/approve/reject — includes `payload`. */
 export interface StrategyDetail extends Strategy {
   payload: TestStrategyPayload;
+}
+
+export type ScenarioCategory =
+  | 'positive'
+  | 'negative'
+  | 'boundary'
+  | 'edge_case'
+  | 'business_logic'
+  | 'validation'
+  | 'security'
+  | 'performance'
+  | 'regression';
+
+export type Severity = 'minor' | 'major' | 'critical' | 'blocker';
+
+export type TestDesignScope = 'api' | 'ui' | 'both';
+
+export interface TestDesignScenario {
+  title: string;
+  category: ScenarioCategory;
+  testing_level: TestingLevel;
+  priority: Priority;
+  severity: Severity;
+  preconditions: string;
+  test_data: string;
+  steps: string[];
+  expected_result: string;
+  business_rule: string;
+  automation_candidate: boolean;
+  /** Whether this scenario should be promoted into a real Test Case on approve. */
+  include: boolean;
+}
+
+export interface TestDesignPayload {
+  summary: string;
+  scope: TestDesignScope;
+  scenarios: TestDesignScenario[];
+}
+
+/** Shape returned by the test design list endpoint — omits `payload`. */
+export interface TestDesign {
+  id: string;
+  requirement_id: string;
+  status: TestDesignStatus;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  updated_at: string;
+}
+
+/** Shape returned by create/get-one/patch/approve/reject — includes `payload`. */
+export interface TestDesignDetail extends TestDesign {
+  payload: TestDesignPayload;
+  /**
+   * The approve endpoint promotes included scenarios into real Test Cases
+   * server-side. The contract says the response "may include a count/list
+   * of created test case ids" without committing to an exact shape — both
+   * are optional here and neither is depended on beyond a friendly success
+   * message (see `handleTestDesignApproveSuccess` in RequirementDetailPage).
+   */
+  created_test_case_ids?: string[];
+  created_test_case_count?: number;
+}
+
+export type TestCaseStatus = 'draft' | 'approved';
+export type TestCaseSource = 'ai' | 'human';
+export type ExecutionType = 'manual' | 'automation' | 'hybrid';
+
+/** Shape returned by GET /projects/{id}/test-cases (list form). */
+export interface TestCaseSummary {
+  id: string;
+  code: string;
+  title: string;
+  testing_level: TestingLevel;
+  category: ScenarioCategory;
+  priority: Priority;
+  severity: Severity;
+  status: TestCaseStatus;
+  source: TestCaseSource;
+  automation_candidate: boolean;
+  execution_type: ExecutionType;
+  requirement_id: string;
+  requirement_title: string;
+  tags: string[];
+  created_at: string;
+}
+
+/** Shape returned by get-one/patch/approve — full detail. */
+export interface TestCase extends TestCaseSummary {
+  preconditions: string;
+  test_data: string;
+  steps: string[];
+  expected_result: string;
+  business_rule: string;
+  created_by: string;
+  updated_at: string;
+}
+
+export interface TestCaseCreateInput {
+  requirement_id: string;
+  title: string;
+  category: ScenarioCategory;
+  testing_level: TestingLevel;
+  priority: Priority;
+  severity: Severity;
+  preconditions: string;
+  test_data: string;
+  steps: string[];
+  expected_result: string;
+  business_rule: string;
+  automation_candidate: boolean;
+  execution_type: ExecutionType;
+  tags: string[];
+}
+
+export type TestCaseUpdateInput = Partial<TestCaseCreateInput>;
+
+export interface TestCaseListParams {
+  requirement_id?: string;
+  testing_level?: TestingLevel;
+  category?: ScenarioCategory;
+  priority?: Priority;
+  status?: TestCaseStatus;
+  automation_candidate?: boolean;
+  search?: string;
+}
+
+export interface TestCaseVersion {
+  version_number: number;
+  /** Field values as of this version. Shape mirrors `TestCase` but is kept loose since the contract doesn't pin it down further. */
+  snapshot: Partial<TestCase>;
+  edited_by: string;
+  edited_at: string;
 }

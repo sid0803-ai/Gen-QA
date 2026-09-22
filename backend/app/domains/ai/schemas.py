@@ -99,3 +99,50 @@ class TestStrategyPayload(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     automation_scope_notes: str
     manual_scope_notes: str
+
+
+# --- Test Design (Sprint 4) --------------------------------------------------
+#
+# `TestDesignPayload` is the JSON shape stored in `TestDesign.payload`
+# (requirements domain), mirroring how `FeasibilityStudyPayload` backs
+# `FeasibilityStudy.payload` and `TestStrategyPayload` backs
+# `TestStrategy.payload`. Approving a TestDesign promotes every scenario
+# with `include == True` into a permanent `TestCase` row (testcases
+# domain) - see `app.domains.requirements.service.approve_test_design()`.
+
+
+class TestDesignScenario(BaseModel):
+    title: str
+    category: Literal[
+        "positive",
+        "negative",
+        "boundary",
+        "edge_case",
+        "business_logic",
+        "validation",
+        "security",
+        "performance",
+        "regression",
+    ]
+    testing_level: Literal[
+        "functional", "api", "ui", "integration", "security", "performance", "regression"
+    ]
+    priority: Literal["low", "medium", "high", "critical"]
+    severity: Literal["minor", "major", "critical", "blocker"]
+    preconditions: str
+    test_data: str
+    steps: list[str] = Field(default_factory=list)
+    expected_result: str
+    business_rule: str = ""
+    automation_candidate: bool
+    # Human review mechanism: starts True (the AI proposes every scenario
+    # for promotion) and is how a human excludes a scenario from being
+    # promoted into a TestCase at approval time, by PATCHing it to False
+    # before approving. See TestDesign's approve endpoint.
+    include: bool = True
+
+
+class TestDesignPayload(BaseModel):
+    summary: str
+    scope: Literal["api", "ui", "both"]
+    scenarios: list[TestDesignScenario] = Field(default_factory=list)

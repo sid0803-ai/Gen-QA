@@ -10,8 +10,8 @@ import ProjectMembersPage from './pages/projects/ProjectMembersPage';
 import ProjectGeneralSettingsPage from './pages/projects/ProjectGeneralSettingsPage';
 import RequirementsListPage from './pages/requirements/RequirementsListPage';
 import RequirementDetailPage from './pages/requirements/RequirementDetailPage';
-import TestDesignPage from './pages/stubs/TestDesignPage';
-import TestCasesPage from './pages/stubs/TestCasesPage';
+import TestCasesListPage from './pages/testcases/TestCasesListPage';
+import TestCaseDetailPage from './pages/testcases/TestCaseDetailPage';
 import TestPlansPage from './pages/stubs/TestPlansPage';
 import AutomationPage from './pages/stubs/AutomationPage';
 import TestingPage from './pages/stubs/TestingPage';
@@ -36,8 +36,8 @@ export default function App() {
               path="/projects/:projectId/requirements/:requirementId"
               element={<RequirementDetailPage />}
             />
-            <Route path="/projects/:projectId/test-design" element={<TestDesignPage />} />
-            <Route path="/projects/:projectId/test-cases" element={<TestCasesPage />} />
+            <Route path="/projects/:projectId/test-cases" element={<TestCasesListPage />} />
+            <Route path="/projects/:projectId/test-cases/:testCaseId" element={<TestCaseDetailPage />} />
             <Route path="/projects/:projectId/test-plans" element={<TestPlansPage />} />
             <Route path="/projects/:projectId/automation" element={<AutomationPage />} />
             <Route path="/projects/:projectId/testing" element={<TestingPage />} />

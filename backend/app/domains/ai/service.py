@@ -3,11 +3,14 @@ handles requirement analysis. `MockAIProvider` is the only/default provider
 for now (Sprint 2); a real LLM-backed provider can be swapped in here later
 without any caller (`app.domains.requirements.service`) needing to change.
 """
+from typing import Literal
+
 from app.domains.ai.provider import AIProvider, MockAIProvider
 from app.domains.ai.schemas import (
     FeasibilityStudyPayload,
     RequirementAnalysisPayload,
     RequirementInput,
+    TestDesignPayload,
     TestStrategyPayload,
 )
 
@@ -33,3 +36,12 @@ class AIService:
     ) -> TestStrategyPayload:
         result = self._provider.generate_test_strategy(requirement, feasibility)
         return TestStrategyPayload.model_validate(result)
+
+    def generate_test_design(
+        self,
+        requirement: RequirementInput,
+        strategy: TestStrategyPayload | None = None,
+        scope: Literal["api", "ui", "both"] = "both",
+    ) -> TestDesignPayload:
+        result = self._provider.generate_test_design(requirement, strategy, scope)
+        return TestDesignPayload.model_validate(result)

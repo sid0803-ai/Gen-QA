@@ -115,12 +115,14 @@ async def test_list_requirements_shape_and_latest_status_none(
         "latest_analysis_status",
         "latest_feasibility_status",
         "latest_strategy_status",
+        "latest_test_design_status",
         "created_at",
     }
     assert item["title"] == "Req A"
     assert item["latest_analysis_status"] == "none"
     assert item["latest_feasibility_status"] == "none"
     assert item["latest_strategy_status"] == "none"
+    assert item["latest_test_design_status"] == "none"
 
 
 async def test_list_requirements_viewer_can_read(

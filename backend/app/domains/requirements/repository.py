@@ -25,6 +25,8 @@ from app.domains.requirements.models import (
     Requirement,
     RequirementPriority,
     StrategyStatus,
+    TestDesign,
+    TestDesignStatus,
     TestStrategy,
 )
 
@@ -55,6 +57,14 @@ class StrategyNotFoundError(Exception):
 
 class StrategyNotDraftError(Exception):
     """Test strategy is not in 'draft' status, so this operation is not allowed -> 409."""
+
+
+class TestDesignNotFoundError(Exception):
+    """Test design doesn't exist for this requirement -> 404."""
+
+
+class TestDesignNotDraftError(Exception):
+    """Test design is not in 'draft' status, so this operation is not allowed -> 409."""
 
 
 async def _get_requirement_row(
@@ -92,6 +102,16 @@ async def _get_strategy_row(
 ) -> TestStrategy | None:
     stmt = select(TestStrategy).where(
         TestStrategy.id == strategy_id, TestStrategy.requirement_id == requirement_id
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _get_test_design_row(
+    db: AsyncSession, requirement_id: uuid.UUID, test_design_id: uuid.UUID
+) -> TestDesign | None:
+    stmt = select(TestDesign).where(
+        TestDesign.id == test_design_id, TestDesign.requirement_id == requirement_id
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -163,19 +183,27 @@ def _latest_status_subquery(model: type):
 
 async def list_requirements(
     db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
-) -> list[tuple[Requirement, str, str, str]]:
+) -> list[tuple[Requirement, str, str, str, str]]:
     """Returns (requirement, latest_analysis_status, latest_feasibility_status,
-    latest_strategy_status) tuples, newest requirement first. Each latest_*
-    status is "none" if the requirement has never had one of that kind, else
-    the status of its most recently created row of that kind."""
+    latest_strategy_status, latest_test_design_status) tuples, newest
+    requirement first. Each latest_* status is "none" if the requirement has
+    never had one of that kind, else the status of its most recently created
+    row of that kind."""
     await project_repository.require_membership(db, project_id, user_id, ProjectRole.viewer)
 
     latest_analysis = _latest_status_subquery(AIAnalysis)
     latest_feasibility = _latest_status_subquery(FeasibilityStudy)
     latest_strategy = _latest_status_subquery(TestStrategy)
+    latest_test_design = _latest_status_subquery(TestDesign)
 
     stmt = (
-        select(Requirement, latest_analysis.c.status, latest_feasibility.c.status, latest_strategy.c.status)
+        select(
+            Requirement,
+            latest_analysis.c.status,
+            latest_feasibility.c.status,
+            latest_strategy.c.status,
+            latest_test_design.c.status,
+        )
         .outerjoin(
             latest_analysis,
             (latest_analysis.c.requirement_id == Requirement.id) & (latest_analysis.c.rn == 1),
@@ -188,6 +216,10 @@ async def list_requirements(
             latest_strategy,
             (latest_strategy.c.requirement_id == Requirement.id) & (latest_strategy.c.rn == 1),
         )
+        .outerjoin(
+            latest_test_design,
+            (latest_test_design.c.requirement_id == Requirement.id) & (latest_test_design.c.rn == 1),
+        )
         .where(Requirement.project_id == project_id)
         .order_by(Requirement.created_at.desc())
     )
@@ -198,8 +230,9 @@ async def list_requirements(
             analysis_status.value if analysis_status is not None else "none",
             feasibility_status.value if feasibility_status is not None else "none",
             strategy_status.value if strategy_status is not None else "none",
+            test_design_status.value if test_design_status is not None else "none",
         )
-        for requirement, analysis_status, feasibility_status, strategy_status in result.all()
+        for requirement, analysis_status, feasibility_status, strategy_status, test_design_status in result.all()
     ]
 
 
@@ -213,28 +246,38 @@ async def get_requirement(
     return requirement
 
 
-async def get_latest_feasibility_and_strategy_status(
+async def get_latest_review_statuses(
     db: AsyncSession, requirement_id: uuid.UUID
-) -> tuple[str, str]:
-    """(latest_feasibility_status, latest_strategy_status) for one requirement.
-    Does not itself check membership - callers already hold a
-    membership-validated Requirement (from get_requirement/create_requirement/
-    update_requirement) before calling this."""
+) -> tuple[str, str, str]:
+    """(latest_feasibility_status, latest_strategy_status,
+    latest_test_design_status) for one requirement. Does not itself check
+    membership - callers already hold a membership-validated Requirement
+    (from get_requirement/create_requirement/update_requirement) before
+    calling this.
+
+    Named generically (not get_latest_feasibility_and_strategy_status, its
+    Sprint 3 name) now that it covers a third review kind - Sprint 4 renamed
+    it here and updated its two call sites below/in router.py accordingly;
+    it is an internal helper (never itself exposed via the API), so this is
+    safe to rename in place rather than needing to keep the old name around.
+    """
     feasibility_status = await _latest_status_for_requirement(db, FeasibilityStudy, requirement_id)
     strategy_status = await _latest_status_for_requirement(db, TestStrategy, requirement_id)
-    return feasibility_status, strategy_status
+    test_design_status = await _latest_status_for_requirement(db, TestDesign, requirement_id)
+    return feasibility_status, strategy_status, test_design_status
 
 
 async def get_requirement_latest_statuses(
     db: AsyncSession, project_id: uuid.UUID, requirement_id: uuid.UUID, user_id: uuid.UUID
-) -> tuple[Requirement, str, str]:
+) -> tuple[Requirement, str, str, str]:
     """Same lookup as get_requirement(), plus (latest_feasibility_status,
-    latest_strategy_status) for the single-requirement detail response."""
+    latest_strategy_status, latest_test_design_status) for the
+    single-requirement detail response."""
     requirement = await get_requirement(db, project_id, requirement_id, user_id)
-    feasibility_status, strategy_status = await get_latest_feasibility_and_strategy_status(
+    feasibility_status, strategy_status, test_design_status = await get_latest_review_statuses(
         db, requirement_id
     )
-    return requirement, feasibility_status, strategy_status
+    return requirement, feasibility_status, strategy_status, test_design_status
 
 
 async def update_requirement(
@@ -714,3 +757,162 @@ async def get_approved_feasibility_payload(
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def get_approved_strategy_payload(
+    db: AsyncSession, requirement_id: uuid.UUID
+) -> dict | None:
+    """Same shape as get_approved_feasibility_payload(), for the most
+    recently *approved* TestStrategy on this requirement. Used by
+    service.generate_test_design() to pass strategy context (which testing
+    levels are applicable) into the AI provider when available - generating
+    a test design never requires an approved test strategy to exist."""
+    stmt = (
+        select(TestStrategy.payload)
+        .where(
+            TestStrategy.requirement_id == requirement_id,
+            TestStrategy.status == StrategyStatus.approved,
+        )
+        .order_by(TestStrategy.sequence.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+# --- Test Designs -----------------------------------------------------------
+
+
+async def create_test_design(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: dict,
+) -> TestDesign:
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.member)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    test_design = TestDesign(
+        requirement_id=requirement.id,
+        status=TestDesignStatus.draft,
+        payload=payload,
+        created_by=user_id,
+    )
+    db.add(test_design)
+    await db.commit()
+    await db.refresh(test_design)
+    return test_design
+
+
+async def list_test_designs(
+    db: AsyncSession, project_id: uuid.UUID, requirement_id: uuid.UUID, user_id: uuid.UUID
+) -> list[TestDesign]:
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.viewer)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    stmt = (
+        select(TestDesign)
+        .where(TestDesign.requirement_id == requirement_id)
+        .order_by(TestDesign.sequence.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_test_design(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> TestDesign:
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.viewer)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    test_design = await _get_test_design_row(db, requirement_id, test_design_id)
+    if test_design is None:
+        raise TestDesignNotFoundError()
+    return test_design
+
+
+async def update_test_design_payload(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: dict,
+) -> TestDesign:
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.member)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    test_design = await _get_test_design_row(db, requirement_id, test_design_id)
+    if test_design is None:
+        raise TestDesignNotFoundError()
+    if test_design.status != TestDesignStatus.draft:
+        raise TestDesignNotDraftError()
+
+    test_design.payload = payload
+    await db.commit()
+    await db.refresh(test_design)
+    return test_design
+
+
+async def get_draft_test_design_for_approval(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> TestDesign:
+    """Fetch + validate a draft TestDesign that's about to be approved,
+    WITHOUT committing or mutating anything. Used by
+    app.domains.requirements.service.approve_test_design(), which mutates
+    the returned row's status/approved_by/approved_at itself and commits
+    only once it has also created (via app.domains.testcases) every TestCase
+    promoted from this approval - so the TestDesign's own approval and the
+    TestCase rows it produces land in one transaction (all-or-nothing)."""
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.member)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    test_design = await _get_test_design_row(db, requirement_id, test_design_id)
+    if test_design is None:
+        raise TestDesignNotFoundError()
+    if test_design.status != TestDesignStatus.draft:
+        raise TestDesignNotDraftError()
+    return test_design
+
+
+async def reject_test_design(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> TestDesign:
+    await project_repository.require_membership(db, project_id, user_id, ProjectRole.member)
+    requirement = await _get_requirement_row(db, project_id, requirement_id)
+    if requirement is None:
+        raise RequirementNotFoundError()
+
+    test_design = await _get_test_design_row(db, requirement_id, test_design_id)
+    if test_design is None:
+        raise TestDesignNotFoundError()
+    if test_design.status != TestDesignStatus.draft:
+        raise TestDesignNotDraftError()
+
+    test_design.status = TestDesignStatus.rejected
+    await db.commit()
+    await db.refresh(test_design)
+    return test_design

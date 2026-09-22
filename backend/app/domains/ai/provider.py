@@ -9,6 +9,7 @@ place that decides which provider to instantiate.
 """
 import re
 from abc import ABC, abstractmethod
+from typing import Literal
 
 from app.domains.ai.schemas import (
     AmbiguityItem,
@@ -18,6 +19,8 @@ from app.domains.ai.schemas import (
     RequirementAnalysisPayload,
     RequirementInput,
     RiskItem,
+    TestDesignPayload,
+    TestDesignScenario,
     TestingLevelScope,
     TestStrategyPayload,
 )
@@ -42,6 +45,23 @@ class AIProvider(ABC):
         """Propose a testing-level breakdown (+ environments/test-data/
         dependencies). `feasibility`, when provided (typically an approved
         FeasibilityStudy's payload), gives extra context to inform scope."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def generate_test_design(
+        self,
+        requirement: RequirementInput,
+        strategy: TestStrategyPayload | None,
+        scope: Literal["api", "ui", "both"],
+    ) -> TestDesignPayload:
+        """Propose a set of concrete test scenarios (title, steps,
+        expected result, etc.) ready for human review and promotion into
+        the Test Case Repository. `strategy`, when provided (typically an
+        approved TestStrategy's payload), gives extra context - its
+        applicable testing levels influence which levels the generated
+        scenarios use. `scope` biases the generated scenarios' testing
+        levels toward api/integration ("api"), ui/functional ("ui"), or a
+        mix of both ("both")."""
         raise NotImplementedError
 
 
@@ -125,6 +145,63 @@ _FEASIBILITY_RULES: list[tuple[list[str], str, str, str]] = [
      "Rule-based/deterministic logic is well suited to automated checks against fixed "
      "input/output pairs."),
 ]
+
+
+# (keywords, title_suffix, category, severity, automation_candidate) rules
+# used by MockAIProvider.generate_test_design to derive extra scenarios
+# from a requirement's text, on top of the three always-present core
+# scenarios (positive/negative/boundary - see generate_test_design()).
+# Mirrors the keyword-heuristic style of _FEASIBILITY_RULES/_RISK_RULES.
+# `automation_candidate` varies by signal the same way _FEASIBILITY_RULES
+# does: CAPTCHA/third-party/notification/concurrency scenarios are flagged
+# False (non-deterministic or external-system-dependent), deterministic
+# rule-based ones True.
+_TEST_DESIGN_RULES: list[tuple[list[str], str, str, str, bool]] = [
+    (["captcha", "recaptcha"],
+     "CAPTCHA challenge blocks automated submission",
+     "security", "major", False),
+    (["third-party", "external", "webhook", "payment gateway", "sms gateway"],
+     "Third-party/external system returns an error or times out",
+     "negative", "major", False),
+    (["payment", "billing", "invoice", "checkout", "refund", "credit card"],
+     "Payment/billing amount is calculated per the stated business rule",
+     "business_logic", "critical", True),
+    (["upload", "file", "attachment", "import", "document"],
+     "Oversized or malformed file is rejected",
+     "edge_case", "major", True),
+    (["login", "auth", "password", "sso", "session", "token"],
+     "Session expires mid-action and requires re-authentication",
+     "security", "major", True),
+    (["delete", "remove", "purge", "deactivate", "cancel"],
+     "Destructive action cannot be triggered without explicit confirmation",
+     "negative", "critical", True),
+    (["concurrent", "simultaneous", "real-time", "realtime", "parallel", "load", "scale", "throughput"],
+     "Two users perform the action concurrently against the same data",
+     "performance", "major", False),
+    (["email", "sms", "notify", "notification", "alert"],
+     "Notification delivery is delayed or fails silently",
+     "edge_case", "minor", False),
+    (["report", "dashboard", "analytics", "export"],
+     "Exported/reported data matches the underlying source data exactly",
+     "validation", "major", True),
+    (["search", "filter", "sort", "pagination"],
+     "Search/filter/sort returns correct results across a large dataset",
+     "boundary", "minor", True),
+]
+
+# Fallback priority for a rule-derived scenario, keyed by its category
+# (rule-derived scenarios don't otherwise carry an explicit priority).
+_CATEGORY_PRIORITY: dict[str, str] = {
+    "positive": "high",
+    "negative": "high",
+    "boundary": "medium",
+    "edge_case": "medium",
+    "business_logic": "critical",
+    "validation": "high",
+    "security": "critical",
+    "performance": "medium",
+    "regression": "low",
+}
 
 
 # (keywords, level) rules used by MockAIProvider.generate_test_strategy to
@@ -568,3 +645,187 @@ class MockAIProvider(AIProvider):
             automation_scope_notes=automation_scope_notes,
             manual_scope_notes=manual_scope_notes,
         )
+
+    # --- Test Design (Sprint 4) -------------------------------------------
+
+    def generate_test_design(
+        self,
+        requirement: RequirementInput,
+        strategy: TestStrategyPayload | None,
+        scope: Literal["api", "ui", "both"],
+    ) -> TestDesignPayload:
+        text = _combined_text(requirement)
+        title = requirement.title.strip() or "this requirement"
+
+        # If an approved test strategy is available, narrow the pool of
+        # testing levels this design draws from to the ones it marked
+        # applicable (functional/regression are always applicable there,
+        # so the pool is never emptied out entirely).
+        applicable_levels: set[str] | None = None
+        if strategy is not None:
+            applicable_levels = {lvl.level for lvl in strategy.levels if lvl.applicable}
+
+        # `scope` biases which testing levels appear: "api" never produces a
+        # "ui" scenario and vice versa, "both" draws from a mix. This is the
+        # scope -> testing_level contract the API/tests rely on.
+        if scope == "api":
+            level_pool = ["api", "integration", "functional", "regression"]
+        elif scope == "ui":
+            level_pool = ["ui", "functional", "regression"]
+        else:
+            level_pool = ["functional", "api", "ui", "integration"]
+
+        if applicable_levels:
+            narrowed_pool = [lvl for lvl in level_pool if lvl in applicable_levels]
+            if narrowed_pool:
+                level_pool = narrowed_pool
+
+        def _level_for(index: int) -> str:
+            return level_pool[index % len(level_pool)]
+
+        scenarios: list[TestDesignScenario] = []
+
+        # --- Core scenarios: always present, spanning positive/negative/
+        # boundary so a test design is never all-positive.
+        acceptance_sentence = (
+            _split_sentences(requirement.acceptance_criteria)[0]
+            if requirement.acceptance_criteria
+            else ""
+        )
+
+        scenarios.append(
+            TestDesignScenario(
+                title=f"{title} — happy path",
+                category="positive",
+                testing_level=_level_for(0),
+                priority="high" if requirement.priority in ("high", "critical") else "medium",
+                severity="major",
+                preconditions=f"The system and any preconditions required by '{title}' are in a valid, ready state.",
+                test_data="Valid, representative input matching the requirement's description.",
+                steps=[
+                    f"Set up the preconditions required for '{title}'.",
+                    "Execute the primary flow exactly as described in the requirement.",
+                    "Observe the resulting state/output.",
+                ],
+                expected_result=f"'{title}' completes successfully and satisfies its stated acceptance criteria.",
+                business_rule=acceptance_sentence,
+                automation_candidate=True,
+            )
+        )
+        scenarios.append(
+            TestDesignScenario(
+                title=f"{title} — invalid input is rejected",
+                category="negative",
+                testing_level=_level_for(1),
+                priority="high",
+                severity="major",
+                preconditions=f"The system is ready to process a request for '{title}'.",
+                test_data="Invalid/malformed input: a missing required field, wrong type, or an out-of-range value.",
+                steps=[
+                    f"Attempt to trigger '{title}' with invalid input.",
+                    "Observe the system's response.",
+                ],
+                expected_result="The system rejects the input with a clear validation error and makes no state change.",
+                business_rule="",
+                automation_candidate=True,
+            )
+        )
+        scenarios.append(
+            TestDesignScenario(
+                title=f"{title} — boundary values",
+                category="boundary",
+                testing_level=_level_for(2),
+                priority="medium",
+                severity="minor",
+                preconditions=f"The system is ready to process a request for '{title}'.",
+                test_data="Input values at the minimum/maximum allowed limits (e.g. empty, zero, max length, max count).",
+                steps=[
+                    f"Trigger '{title}' with input values exactly at each known boundary.",
+                    "Observe the system's behavior at each boundary.",
+                ],
+                expected_result="The system handles every boundary value correctly, with no off-by-one errors.",
+                business_rule="",
+                automation_candidate=True,
+            )
+        )
+
+        if requirement.acceptance_criteria:
+            for sentence in _split_sentences(requirement.acceptance_criteria)[:3]:
+                if len(scenarios) >= 10:
+                    break
+                scenarios.append(
+                    TestDesignScenario(
+                        title=f"Verify acceptance criterion: {sentence[:60]}",
+                        category="validation",
+                        testing_level=_level_for(len(scenarios)),
+                        priority="high",
+                        severity="major",
+                        preconditions=f"The system is ready to process a request for '{title}'.",
+                        test_data=f"Input data sufficient to exercise: {sentence}.",
+                        steps=[
+                            f"Exercise '{title}' in a way that satisfies: {sentence}.",
+                            "Verify the outcome.",
+                        ],
+                        expected_result=f"'{title}' satisfies: {sentence}.",
+                        business_rule=sentence,
+                        automation_candidate=True,
+                    )
+                )
+
+        for keywords, title_suffix, category, severity, automation_candidate in _TEST_DESIGN_RULES:
+            if len(scenarios) >= 10:
+                break
+            if any(k in text for k in keywords):
+                scenarios.append(
+                    TestDesignScenario(
+                        title=f"{title_suffix} — {title}",
+                        category=category,
+                        testing_level=_level_for(len(scenarios)),
+                        priority=_CATEGORY_PRIORITY[category],
+                        severity=severity,
+                        preconditions=f"The system is ready to process a request for '{title}'.",
+                        test_data=f"Input tailored to exercise: {title_suffix.lower()}.",
+                        steps=[
+                            f"Set up conditions for: {title_suffix.lower()}.",
+                            "Execute the scenario.",
+                            "Observe the result.",
+                        ],
+                        expected_result=f"The system behaves correctly for: {title_suffix.lower()}.",
+                        business_rule="",
+                        automation_candidate=automation_candidate,
+                    )
+                )
+
+        if len(scenarios) < 4:
+            # No acceptance-criteria-derived or keyword-matched scenarios
+            # beyond the three always-present core ones: add a generic
+            # exploratory scenario so a test design always covers at least 4.
+            scenarios.append(
+                TestDesignScenario(
+                    title=f"General exploratory review — {title}",
+                    category="edge_case",
+                    testing_level=_level_for(len(scenarios)),
+                    priority="medium",
+                    severity="minor",
+                    preconditions=f"The system is ready to process a request for '{title}'.",
+                    test_data="Ad-hoc exploratory input.",
+                    steps=["Explore the feature broadly, without a fixed script."],
+                    expected_result="No unexpected/undocumented behavior is observed.",
+                    business_rule="",
+                    automation_candidate=False,
+                )
+            )
+
+        categories_seen = sorted({s.category for s in scenarios})
+        summary = (
+            f"Test design for '{title}' ({scope} scope) proposes {len(scenarios)} scenario(s) "
+            f"across {len(categories_seen)} categor{'y' if len(categories_seen) == 1 else 'ies'} "
+            f"({', '.join(categories_seen)})."
+        )
+        if strategy is not None:
+            summary += (
+                " Informed by the approved test strategy's applicable testing levels: "
+                f"{', '.join(sorted(applicable_levels)) if applicable_levels else 'none marked applicable'}."
+            )
+
+        return TestDesignPayload(summary=summary, scope=scope, scenarios=scenarios[:10])

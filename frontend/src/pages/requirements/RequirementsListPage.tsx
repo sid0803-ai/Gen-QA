@@ -85,6 +85,13 @@ export default function RequirementsListPage() {
       render: (status: string) => <StatusBadge status={status} />,
     },
     {
+      title: 'Test Design',
+      dataIndex: 'latest_test_design_status',
+      key: 'latest_test_design_status',
+      width: 140,
+      render: (status: string) => <StatusBadge status={status} />,
+    },
+    {
       title: 'Created',
       dataIndex: 'created_at',
       key: 'created_at',

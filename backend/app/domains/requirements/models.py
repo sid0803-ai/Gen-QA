@@ -50,6 +50,12 @@ class StrategyStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class TestDesignStatus(str, enum.Enum):
+    draft = "draft"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Requirement(Base):
     __tablename__ = "requirements"
 
@@ -91,6 +97,9 @@ class Requirement(Base):
     )
     test_strategies: Mapped[list["TestStrategy"]] = relationship(
         "TestStrategy", back_populates="requirement", cascade="all, delete-orphan"
+    )
+    test_designs: Mapped[list["TestDesign"]] = relationship(
+        "TestDesign", back_populates="requirement", cascade="all, delete-orphan"
     )
 
 
@@ -215,3 +224,55 @@ class TestStrategy(Base):
     sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
 
     requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="test_strategies")
+
+
+class TestDesign(Base):
+    """Sprint 4: the fourth "AI suggests, human reviews, human approves"
+    stage on a requirement, same draft/approved/rejected shape as
+    AIAnalysis/FeasibilityStudy/TestStrategy. `payload` validates against
+    `app.domains.ai.schemas.TestDesignPayload` (a summary + list of
+    TestDesignScenario, each with an `include` flag). Approving a
+    TestDesign promotes every scenario with `include == True` into a
+    permanent `TestCase` row in the project-wide Test Case Repository
+    (`app.domains.testcases`) - see
+    `app.domains.requirements.service.approve_test_design()`.
+    """
+
+    __tablename__ = "test_designs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("requirements.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[TestDesignStatus] = mapped_column(
+        SAEnum(
+            TestDesignStatus, name="test_design_status", values_callable=lambda e: [m.value for m in e]
+        ),
+        nullable=False,
+        default=TestDesignStatus.draft,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Same monotonic-ordering trick as AIAnalysis.sequence, added proactively
+    # this sprint (Sprints 2 and 3 each had to discover the need for this the
+    # hard way on their own new tables) - see that column's docstring for why
+    # `created_at` alone is not safe to order/rank "most recent" by.
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="test_designs")

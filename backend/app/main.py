@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.domains.identity.router import router as identity_router
 from app.domains.projects.router import router as projects_router
 from app.domains.requirements.router import router as requirements_router
+from app.domains.testcases.router import router as testcases_router
 
 settings = get_settings()
 
@@ -24,6 +25,7 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(identity_router, prefix=API_V1_PREFIX)
 app.include_router(projects_router, prefix=API_V1_PREFIX)
 app.include_router(requirements_router, prefix=API_V1_PREFIX)
+app.include_router(testcases_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["health"])

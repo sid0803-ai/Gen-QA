@@ -1,11 +1,15 @@
 """Routes: /api/v1/projects/{project_id}/requirements/* and nested
-/analyses/*, /feasibility/*, /strategy/* (requirements + ai-analysis +
-feasibility + test-strategy domains).
+/analyses/*, /feasibility/*, /strategy/*, /test-design/* (requirements +
+ai-analysis + feasibility + test-strategy + test-design domains).
 
 Role rule: `viewer` can read (GET) everything; `member`/`admin` can
 create/update requirements and trigger/edit/approve/reject
-analyses/feasibility-studies/test-strategies; only `admin` can delete a
-requirement (no delete endpoint exists for analyses/feasibility/strategy).
+analyses/feasibility-studies/test-strategies/test-designs; only `admin` can
+delete a requirement (no delete endpoint exists for
+analyses/feasibility/strategy/test-design). Approving a test design has one
+extra side effect the other three don't: it promotes every `include==true`
+scenario into a TestCase row via `app.domains.testcases` - see
+`service.approve_test_design()`.
 Enforced the same way as the projects domain: repository functions call
 `project_repository.require_membership(..., min_role=...)` and raise
 `NotAMemberError` (-> 404, never leaks existence) or `InsufficientRoleError`
@@ -32,12 +36,16 @@ router = APIRouter(prefix="/projects", tags=["requirements"])
 
 
 def _to_requirement_read(
-    requirement, latest_feasibility_status: str, latest_strategy_status: str
+    requirement,
+    latest_feasibility_status: str,
+    latest_strategy_status: str,
+    latest_test_design_status: str,
 ) -> schemas.RequirementRead:
     """RequirementRead can't be built via `.model_validate(requirement)` alone
-    (Sprint 3): latest_feasibility_status/latest_strategy_status aren't ORM
-    columns, so every route that returns a RequirementRead must compute and
-    pass them explicitly - this helper keeps that in one place."""
+    (Sprint 3, extended Sprint 4): latest_feasibility_status/
+    latest_strategy_status/latest_test_design_status aren't ORM columns, so
+    every route that returns a RequirementRead must compute and pass them
+    explicitly - this helper keeps that in one place."""
     return schemas.RequirementRead(
         id=requirement.id,
         project_id=requirement.project_id,
@@ -51,6 +59,7 @@ def _to_requirement_read(
         updated_at=requirement.updated_at,
         latest_feasibility_status=latest_feasibility_status,
         latest_strategy_status=latest_strategy_status,
+        latest_test_design_status=latest_test_design_status,
     )
 
 
@@ -76,7 +85,7 @@ async def create_requirement(
             acceptance_criteria=payload.acceptance_criteria,
             priority=payload.priority,
         )
-        feasibility_status, strategy_status = await repository.get_latest_feasibility_and_strategy_status(
+        feasibility_status, strategy_status, test_design_status = await repository.get_latest_review_statuses(
             db, requirement.id
         )
     except project_repository.NotAMemberError as exc:
@@ -85,7 +94,7 @@ async def create_requirement(
         raise HTTPException(
             status_code=403, detail="Member role required on this project."
         ) from exc
-    return _to_requirement_read(requirement, feasibility_status, strategy_status)
+    return _to_requirement_read(requirement, feasibility_status, strategy_status, test_design_status)
 
 
 @router.get("/{project_id}/requirements", response_model=list[schemas.RequirementListItem])
@@ -107,9 +116,16 @@ async def list_requirements(
             latest_analysis_status=latest_analysis_status,
             latest_feasibility_status=latest_feasibility_status,
             latest_strategy_status=latest_strategy_status,
+            latest_test_design_status=latest_test_design_status,
             created_at=requirement.created_at,
         )
-        for requirement, latest_analysis_status, latest_feasibility_status, latest_strategy_status in rows
+        for (
+            requirement,
+            latest_analysis_status,
+            latest_feasibility_status,
+            latest_strategy_status,
+            latest_test_design_status,
+        ) in rows
     ]
 
 
@@ -122,14 +138,14 @@ async def get_requirement(
     db: AsyncSession = Depends(get_db),
 ) -> schemas.RequirementRead:
     try:
-        requirement, feasibility_status, strategy_status = await repository.get_requirement_latest_statuses(
+        requirement, feasibility_status, strategy_status, test_design_status = await repository.get_requirement_latest_statuses(
             db, project_id, requirement_id, current_user.id
         )
     except project_repository.NotAMemberError as exc:
         raise HTTPException(status_code=404, detail="Project not found.") from exc
     except repository.RequirementNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Requirement not found.") from exc
-    return _to_requirement_read(requirement, feasibility_status, strategy_status)
+    return _to_requirement_read(requirement, feasibility_status, strategy_status, test_design_status)
 
 
 @router.patch("/{project_id}/requirements/{requirement_id}", response_model=schemas.RequirementRead)
@@ -152,7 +168,7 @@ async def update_requirement(
             acceptance_criteria=payload.acceptance_criteria,
             priority=payload.priority,
         )
-        feasibility_status, strategy_status = await repository.get_latest_feasibility_and_strategy_status(
+        feasibility_status, strategy_status, test_design_status = await repository.get_latest_review_statuses(
             db, requirement.id
         )
     except project_repository.NotAMemberError as exc:
@@ -163,7 +179,7 @@ async def update_requirement(
         ) from exc
     except repository.RequirementNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Requirement not found.") from exc
-    return _to_requirement_read(requirement, feasibility_status, strategy_status)
+    return _to_requirement_read(requirement, feasibility_status, strategy_status, test_design_status)
 
 
 @router.delete("/{project_id}/requirements/{requirement_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -709,3 +725,184 @@ async def reject_test_strategy(
             status_code=409, detail="Only a draft test strategy can be rejected."
         ) from exc
     return schemas.StrategyRead.model_validate(strategy)
+
+
+# --- Test Designs (Sprint 4) -------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/requirements/{requirement_id}/test-design",
+    response_model=schemas.TestDesignRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_test_design(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: schemas.TestDesignCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.TestDesignRead:
+    try:
+        test_design = await service.generate_test_design(
+            db, project_id, requirement_id, current_user.id, payload.scope
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(
+            status_code=403, detail="Member role required on this project."
+        ) from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    return schemas.TestDesignRead.model_validate(test_design)
+
+
+@router.get(
+    "/{project_id}/requirements/{requirement_id}/test-design",
+    response_model=list[schemas.TestDesignListItem],
+)
+async def list_test_designs(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    _membership: ProjectMember = Depends(require_project_role(ProjectRole.viewer)),
+    db: AsyncSession = Depends(get_db),
+) -> list[schemas.TestDesignListItem]:
+    try:
+        rows = await repository.list_test_designs(db, project_id, requirement_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    return [schemas.TestDesignListItem.model_validate(td) for td in rows]
+
+
+@router.get(
+    "/{project_id}/requirements/{requirement_id}/test-design/{test_design_id}",
+    response_model=schemas.TestDesignRead,
+)
+async def get_test_design(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    _membership: ProjectMember = Depends(require_project_role(ProjectRole.viewer)),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.TestDesignRead:
+    try:
+        test_design = await repository.get_test_design(
+            db, project_id, requirement_id, test_design_id, current_user.id
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    except repository.TestDesignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Test design not found.") from exc
+    return schemas.TestDesignRead.model_validate(test_design)
+
+
+@router.patch(
+    "/{project_id}/requirements/{requirement_id}/test-design/{test_design_id}",
+    response_model=schemas.TestDesignRead,
+)
+async def update_test_design(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    payload: schemas.TestDesignPayloadUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.TestDesignRead:
+    try:
+        test_design = await repository.update_test_design_payload(
+            db,
+            project_id,
+            requirement_id,
+            test_design_id,
+            current_user.id,
+            payload.payload.model_dump(mode="json"),
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(
+            status_code=403, detail="Member role required on this project."
+        ) from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    except repository.TestDesignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Test design not found.") from exc
+    except repository.TestDesignNotDraftError as exc:
+        raise HTTPException(
+            status_code=409, detail="Test design can only be edited while in draft status."
+        ) from exc
+    return schemas.TestDesignRead.model_validate(test_design)
+
+
+@router.post(
+    "/{project_id}/requirements/{requirement_id}/test-design/{test_design_id}/approve",
+    response_model=schemas.TestDesignApproveResponse,
+)
+async def approve_test_design(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.TestDesignApproveResponse:
+    try:
+        test_design, created_test_cases = await service.approve_test_design(
+            db, project_id, requirement_id, test_design_id, current_user.id
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(
+            status_code=403, detail="Member role required on this project."
+        ) from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    except repository.TestDesignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Test design not found.") from exc
+    except repository.TestDesignNotDraftError as exc:
+        raise HTTPException(
+            status_code=409, detail="Only a draft test design can be approved."
+        ) from exc
+    return schemas.TestDesignApproveResponse(
+        **schemas.TestDesignRead.model_validate(test_design).model_dump(),
+        created_test_case_ids=[tc.id for tc in created_test_cases],
+        created_test_case_count=len(created_test_cases),
+    )
+
+
+@router.post(
+    "/{project_id}/requirements/{requirement_id}/test-design/{test_design_id}/reject",
+    response_model=schemas.TestDesignRead,
+)
+async def reject_test_design(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    test_design_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.TestDesignRead:
+    try:
+        test_design = await repository.reject_test_design(
+            db, project_id, requirement_id, test_design_id, current_user.id
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(
+            status_code=403, detail="Member role required on this project."
+        ) from exc
+    except repository.RequirementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Requirement not found.") from exc
+    except repository.TestDesignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Test design not found.") from exc
+    except repository.TestDesignNotDraftError as exc:
+        raise HTTPException(
+            status_code=409, detail="Only a draft test design can be rejected."
+        ) from exc
+    return schemas.TestDesignRead.model_validate(test_design)

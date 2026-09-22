@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { App as AntApp, Button, Card, Form, Modal, Popconfirm, Skeleton, Space, Typography } from 'antd';
+import { App as AntApp, Button, Card, Form, Modal, Popconfirm, Select, Skeleton, Space, Typography } from 'antd';
 import {
   ApartmentOutlined,
+  BulbOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -33,10 +34,19 @@ import {
   useStrategy,
   useUpdateStrategy,
 } from '../../hooks/useStrategy';
+import {
+  useApproveTestDesign,
+  useCreateTestDesign,
+  useRejectTestDesign,
+  useTestDesign,
+  useTestDesigns,
+  useUpdateTestDesign,
+} from '../../hooks/useTestDesign';
 import { useProjects } from '../../hooks/useProjects';
 import { StatusBadge } from '../../components/StatusBadge';
 import { ReviewSection } from '../../components/ReviewSection';
 import { ApiError } from '../../api/client';
+import { TEST_DESIGN_SCOPE_OPTIONS } from '../../api/testDesign';
 import type {
   AnalysisDetail,
   FeasibilityDetail,
@@ -44,12 +54,16 @@ import type {
   RequirementUpdateInput,
   FeasibilityStudyPayload,
   StrategyDetail,
+  TestDesignDetail,
+  TestDesignPayload,
+  TestDesignScope,
   TestStrategyPayload,
 } from '../../api/types';
 import { RequirementFormFields } from './RequirementFormFields';
 import { AnalysisPayloadView } from './AnalysisPayloadView';
 import { FeasibilityPayloadView } from './FeasibilityPayloadView';
 import { TestStrategyPayloadView } from './TestStrategyPayloadView';
+import { TestDesignPayloadView } from './TestDesignPayloadView';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -89,6 +103,11 @@ export default function RequirementDetailPage() {
   // Test Strategy
   const { data: strategies, isLoading: strategiesLoading } = useStrategies(projectId, requirementId);
   const createStrategy = useCreateStrategy(projectId, requirementId);
+
+  // Test Design
+  const { data: testDesigns, isLoading: testDesignsLoading } = useTestDesigns(projectId, requirementId);
+  const createTestDesign = useCreateTestDesign(projectId, requirementId);
+  const [testDesignScope, setTestDesignScope] = useState<TestDesignScope>('both');
 
   const [editOpen, setEditOpen] = useState(false);
   const [form] = Form.useForm<RequirementUpdateInput>();
@@ -158,6 +177,43 @@ export default function RequirementDetailPage() {
     }
   };
 
+  const handleGenerateTestDesign = async () => {
+    try {
+      await createTestDesign.mutateAsync(testDesignScope);
+      message.success('Test design started');
+    } catch (err) {
+      if (err instanceof ApiError) message.error(err.detail);
+    }
+  };
+
+  const handleTestDesignApproveSuccess = (detail: TestDesignDetail) => {
+    const count = detail.created_test_case_count ?? detail.created_test_case_ids?.length;
+    const testCasesUrl = `/projects/${projectId}/test-cases?requirement_id=${requirementId}`;
+    // Plain <a onClick={navigate}> rather than react-router's <Link>: antd's
+    // message content is rendered through the AntApp holder, which sits
+    // outside <BrowserRouter> in main.tsx, so a <Link> rendered there throws
+    // (no Router context at that portal's mount point). `navigate` itself is
+    // just a function closed over the router instance from this component
+    // (which IS inside the Router), so calling it from a click handler here
+    // works fine even though the anchor renders outside the Router tree.
+    message.success(
+      <span>
+        {count != null
+          ? `Test design approved — created ${count} test case${count === 1 ? '' : 's'}.`
+          : 'Test design approved — test cases created.'}{' '}
+        <a
+          onClick={(e) => {
+            e.preventDefault();
+            navigate(testCasesUrl);
+          }}
+        >
+          View in Test Cases
+        </a>
+      </span>,
+      6,
+    );
+  };
+
   // Named `use*` wrappers (not inline arrows) so eslint-plugin-react-hooks
   // recognizes these as hooks rather than plain callbacks when passed as
   // props to ReviewSection.
@@ -179,6 +235,12 @@ export default function RequirementDetailPage() {
   const useStrategyUpdate = (id: string | undefined) => useUpdateStrategy(projectId, requirementId, id);
   const useStrategyApprove = (id: string | undefined) => useApproveStrategy(projectId, requirementId, id);
   const useStrategyReject = (id: string | undefined) => useRejectStrategy(projectId, requirementId, id);
+
+  const useTestDesignDetail = (id: string | undefined, opts?: { enabled?: boolean }) =>
+    useTestDesign(projectId, requirementId, id, opts);
+  const useTestDesignUpdate = (id: string | undefined) => useUpdateTestDesign(projectId, requirementId, id);
+  const useTestDesignApprove = (id: string | undefined) => useApproveTestDesign(projectId, requirementId, id);
+  const useTestDesignReject = (id: string | undefined) => useRejectTestDesign(projectId, requirementId, id);
 
   if (isLoading || !requirement) {
     return <Skeleton active paragraph={{ rows: 6 }} />;
@@ -283,6 +345,37 @@ export default function RequirementDetailPage() {
         useReject={useStrategyReject}
         renderPayload={(payload, editable, onChange) => (
           <TestStrategyPayloadView payload={payload} editable={editable} onChange={onChange} />
+        )}
+      />
+
+      <ReviewSection<TestDesignPayload, TestDesignDetail>
+        title="Test Design"
+        generateLabel="Generate Test Design"
+        generateIcon={<BulbOutlined />}
+        onGenerate={handleGenerateTestDesign}
+        generating={createTestDesign.isPending}
+        generateExtra={
+          <Select<TestDesignScope>
+            value={testDesignScope}
+            onChange={setTestDesignScope}
+            options={TEST_DESIGN_SCOPE_OPTIONS}
+            style={{ width: 110 }}
+          />
+        }
+        canEdit={canEdit}
+        items={testDesigns}
+        itemsLoading={testDesignsLoading}
+        emptyEditableText="No test design yet — pick a scope and click Generate Test Design to generate AI-suggested test scenarios."
+        emptyReadonlyText="No test design yet."
+        historyTitle="Test Design History"
+        itemName="Test design"
+        useDetail={useTestDesignDetail}
+        useUpdate={useTestDesignUpdate}
+        useApprove={useTestDesignApprove}
+        useReject={useTestDesignReject}
+        onApproveSuccess={handleTestDesignApproveSuccess}
+        renderPayload={(payload, editable, onChange) => (
+          <TestDesignPayloadView payload={payload} editable={editable} onChange={onChange} />
         )}
       />
 

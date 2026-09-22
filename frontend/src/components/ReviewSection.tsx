@@ -39,6 +39,7 @@ function CurrentReviewPanel<TPayload, TDetail extends ReviewItem & { payload: TP
   useReject,
   renderPayload,
   itemName,
+  onApproveSuccess,
 }: {
   item: ReviewItem;
   canReview: boolean;
@@ -48,6 +49,7 @@ function CurrentReviewPanel<TPayload, TDetail extends ReviewItem & { payload: TP
   useReject: ReviewMutationHook<TDetail>;
   renderPayload: PayloadRenderer<TPayload>;
   itemName: string;
+  onApproveSuccess?: (detail: TDetail) => void;
 }) {
   const { data: detail, isLoading } = useDetail(item.id);
   const [draft, setDraft] = useState<TPayload | null>(null);
@@ -87,8 +89,12 @@ function CurrentReviewPanel<TPayload, TDetail extends ReviewItem & { payload: TP
   const handleApprove = async () => {
     if (guardDirty()) return;
     try {
-      await approve.mutateAsync();
-      message.success(`${itemName} approved`);
+      const result = await approve.mutateAsync();
+      if (onApproveSuccess) {
+        onApproveSuccess(result);
+      } else {
+        message.success(`${itemName} approved`);
+      }
     } catch (err) {
       if (err instanceof ApiError) message.error(err.detail);
     }
@@ -160,6 +166,13 @@ export interface ReviewSectionProps<TPayload, TDetail extends ReviewItem & { pay
   generateIcon?: ReactNode;
   onGenerate: () => void | Promise<void>;
   generating: boolean;
+  /**
+   * Extra control rendered next to the generate button, e.g. a scope picker
+   * that the caller's `onGenerate` closure reads from its own local state.
+   * Keeps sections with no pre-generate input (Analysis/Feasibility/Strategy)
+   * simple while letting Test Design (which needs a scope) opt in.
+   */
+  generateExtra?: ReactNode;
   /** Member/admin — gates the generate button and edit/approve/reject inside the current panel. */
   canEdit: boolean;
   items: ReviewItem[] | undefined;
@@ -174,6 +187,12 @@ export interface ReviewSectionProps<TPayload, TDetail extends ReviewItem & { pay
   useApprove: ReviewMutationHook<TDetail>;
   useReject: ReviewMutationHook<TDetail>;
   renderPayload: PayloadRenderer<TPayload>;
+  /**
+   * Called instead of the generic "$itemName approved" toast when an approve
+   * succeeds — lets a section show payload-specific success UI (e.g. Test
+   * Design surfacing how many Test Cases were just created).
+   */
+  onApproveSuccess?: (detail: TDetail) => void;
 }
 
 /**
@@ -190,6 +209,7 @@ export function ReviewSection<TPayload, TDetail extends ReviewItem & { payload: 
   generateIcon,
   onGenerate,
   generating,
+  generateExtra,
   canEdit,
   items,
   itemsLoading,
@@ -202,6 +222,7 @@ export function ReviewSection<TPayload, TDetail extends ReviewItem & { payload: 
   useApprove,
   useReject,
   renderPayload,
+  onApproveSuccess,
 }: ReviewSectionProps<TPayload, TDetail>) {
   const [historyActiveKeys, setHistoryActiveKeys] = useState<string[]>([]);
   const [latest, ...history] = items ?? [];
@@ -221,9 +242,12 @@ export function ReviewSection<TPayload, TDetail extends ReviewItem & { payload: 
           {title}
         </Title>
         {canEdit && (
-          <Button type="primary" icon={generateIcon} onClick={onGenerate} loading={generating}>
-            {generateLabel}
-          </Button>
+          <Space>
+            {generateExtra}
+            <Button type="primary" icon={generateIcon} onClick={onGenerate} loading={generating}>
+              {generateLabel}
+            </Button>
+          </Space>
         )}
       </div>
 
@@ -242,6 +266,7 @@ export function ReviewSection<TPayload, TDetail extends ReviewItem & { payload: 
             useReject={useReject}
             renderPayload={renderPayload}
             itemName={itemName}
+            onApproveSuccess={onApproveSuccess}
           />
         )}
       </Card>

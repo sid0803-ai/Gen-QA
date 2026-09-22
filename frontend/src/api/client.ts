@@ -3,6 +3,15 @@ import type { AuthTokens } from './types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
+if (!BASE_URL) {
+  // Fails loudly at startup instead of letting every request silently
+  // hit "undefined/api/v1/..." — see frontend/README.md for local setup
+  // (copy .env.example to .env and set VITE_API_BASE_URL).
+  console.error(
+    'VITE_API_BASE_URL is not set. Copy frontend/.env.example to frontend/.env and restart the dev server.',
+  );
+}
+
 export class ApiError extends Error {
   status: number;
   detail: string;
