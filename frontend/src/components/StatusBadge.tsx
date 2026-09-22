@@ -13,6 +13,7 @@ const STATUS_COLORS: Record<string, string> = {
   member: 'blue',
   viewer: 'default',
   // generic review/approval statuses (future sprints)
+  none: 'default',
   draft: 'default',
   pending: 'gold',
   in_review: 'gold',
@@ -22,12 +23,18 @@ const STATUS_COLORS: Record<string, string> = {
   failed: 'red',
   blocked: 'orange',
   skipped: 'default',
+  // requirement priority
+  low: 'blue',
+  medium: 'gold',
+  high: 'orange',
+  critical: 'red',
 };
 
 const STATUS_LABELS: Record<string, string> = {
   admin: 'Admin',
   member: 'Member',
   viewer: 'Viewer',
+  none: 'No analysis',
   draft: 'Draft',
   pending: 'Pending',
   in_review: 'In review',
@@ -37,6 +44,10 @@ const STATUS_LABELS: Record<string, string> = {
   failed: 'Failed',
   blocked: 'Blocked',
   skipped: 'Skipped',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
 };
 
 export interface StatusBadgeProps {

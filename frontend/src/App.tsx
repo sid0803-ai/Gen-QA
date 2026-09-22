@@ -8,7 +8,8 @@ import ProjectDashboardPage from './pages/projects/ProjectDashboardPage';
 import ProjectSettingsLayout from './pages/projects/ProjectSettingsLayout';
 import ProjectMembersPage from './pages/projects/ProjectMembersPage';
 import ProjectGeneralSettingsPage from './pages/projects/ProjectGeneralSettingsPage';
-import RequirementsPage from './pages/stubs/RequirementsPage';
+import RequirementsListPage from './pages/requirements/RequirementsListPage';
+import RequirementDetailPage from './pages/requirements/RequirementDetailPage';
 import TestDesignPage from './pages/stubs/TestDesignPage';
 import TestCasesPage from './pages/stubs/TestCasesPage';
 import TestPlansPage from './pages/stubs/TestPlansPage';
@@ -30,7 +31,11 @@ export default function App() {
             <Route path="/" element={<Navigate to="/projects" replace />} />
             <Route path="/projects" element={<ProjectsListPage />} />
             <Route path="/projects/:projectId" element={<ProjectDashboardPage />} />
-            <Route path="/projects/:projectId/requirements" element={<RequirementsPage />} />
+            <Route path="/projects/:projectId/requirements" element={<RequirementsListPage />} />
+            <Route
+              path="/projects/:projectId/requirements/:requirementId"
+              element={<RequirementDetailPage />}
+            />
             <Route path="/projects/:projectId/test-design" element={<TestDesignPage />} />
             <Route path="/projects/:projectId/test-cases" element={<TestCasesPage />} />
             <Route path="/projects/:projectId/test-plans" element={<TestPlansPage />} />

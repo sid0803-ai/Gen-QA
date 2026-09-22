@@ -1,18 +1,29 @@
-# Gen-QA Backend — Sprint 1 (Foundation)
+# Gen-QA Backend — Sprint 1 + Sprint 2
 
-FastAPI modular-monolith backend. Sprint 1 implements two domains:
+FastAPI modular-monolith backend. Sprint 1 implemented two domains, Sprint 2 adds two
+more:
 
-- **identity** — user registration, login (OAuth2 password flow), JWT access/refresh
-  tokens, `GET /auth/me`.
-- **projects** — projects and project membership (roles: `admin` > `member` > `viewer`),
-  with project membership as the sole data-isolation boundary for now.
+- **identity** (Sprint 1) — user registration, login (OAuth2 password flow), JWT
+  access/refresh tokens, `GET /auth/me`.
+- **projects** (Sprint 1) — projects and project membership (roles: `admin` >
+  `member` > `viewer`), with project membership as the sole data-isolation boundary.
+- **requirements** (Sprint 2) — project-scoped requirements (title, description,
+  business objective, acceptance criteria, priority) and their AI-analysis lifecycle
+  (`ai_analyses`: draft → approved/rejected, editable while draft).
+- **ai** (Sprint 2) — the `AIProvider` abstraction + `AIService` that generates a
+  structured `RequirementAnalysisPayload` for a requirement. Only a `MockAIProvider`
+  (keyword-heuristic, no real LLM call) exists so far; a real provider can be added
+  later without changing any caller. This domain has no database model of its own —
+  `AIAnalysis` (the persisted result) lives in the `requirements` domain, since its
+  lifecycle (draft/approve/reject, edit-while-draft, multi-analysis history) is a
+  requirements-domain concern.
 
-Every future domain (requirements, test cases, executions, ...) will be added the
-same way: `app/domains/<name>/{models,schemas,service,router}.py`, mounted under
-`/api/v1` in `app/main.py`, and — if it stores project-scoped data — reading/writing
-through a `repository.py` that always takes `project_id` + the requesting user's id
-and enforces membership via `app.domains.projects.repository.require_membership`
-(or the `require_project_role` dependency in `app/core/deps.py`).
+Every future domain (test cases, executions, ...) will be added the same way:
+`app/domains/<name>/{models,schemas,service,router}.py`, mounted under `/api/v1` in
+`app/main.py`, and — if it stores project-scoped data — reading/writing through a
+`repository.py` that always takes `project_id` + the requesting user's id and
+enforces membership via `app.domains.projects.repository.require_membership` (or the
+`require_project_role` dependency in `app/core/deps.py`).
 
 ## Stack
 
@@ -33,6 +44,8 @@ backend/
     domains/
       identity/                  User model, auth endpoints
       projects/                  Project, ProjectMember, membership-enforced repository
+      requirements/               Requirement + AIAnalysis models, CRUD + analysis lifecycle
+      ai/                          AIProvider ABC, MockAIProvider, AIService
   alembic/                       Migrations
   tests/                         pytest suite (incl. test_project_isolation.py)
   Dockerfile
@@ -157,6 +170,28 @@ Base path: `/api/v1`
 - `PATCH /projects/{id}/members/{user_id}` — admin only, `{role}`; 409 if it would leave the project with zero admins.
 - `DELETE /projects/{id}/members/{user_id}` — admin only; same last-admin protection, 409.
 
+**Requirements** (nested under a project; roles as above — `viewer` reads, `member`
+create/update, `admin` delete)
+- `POST /projects/{id}/requirements` — `{title, description, business_objective?, acceptance_criteria?, priority?}` (`priority` defaults `medium`) → 201 full requirement.
+- `GET /projects/{id}/requirements` → 200 list `[{id, title, priority, latest_analysis_status, created_at}]`. `latest_analysis_status` is `"none"` | `"draft"` | `"approved"` | `"rejected"`, derived from the most recently *created* `AIAnalysis` for that requirement (ties broken by an internal DB-generated monotonic sequence, not by `created_at` alone — see `AIAnalysis.sequence` in `app/domains/requirements/models.py`).
+- `GET /projects/{id}/requirements/{req_id}` → 200 full requirement; 404 if not found or not a member (never leaks existence).
+- `PATCH /projects/{id}/requirements/{req_id}` — any subset of `{title, description, business_objective, acceptance_criteria, priority}` → 200 updated.
+- `DELETE /projects/{id}/requirements/{req_id}` — admin only → 204.
+
+**AI Analysis** (nested under a requirement; `member`/`admin` can trigger/edit/approve/reject, `viewer` can read)
+- `POST /projects/{id}/requirements/{req_id}/analyses` — no body; runs `MockAIProvider.analyze_requirement` and creates a new `status="draft"` analysis → 201 full detail (incl. `payload`). Does **not** touch/invalidate any prior analysis on the same requirement — every trigger adds to history.
+- `GET /projects/{id}/requirements/{req_id}/analyses` → 200 list, newest first. **List items omit `payload`** (only `id, requirement_id, status, created_by, created_at, approved_by, approved_at, updated_at`) to keep the list response small; use the detail endpoint for the full payload.
+- `GET /projects/{id}/requirements/{req_id}/analyses/{analysis_id}` → 200 full detail incl. `payload`.
+- `PATCH /projects/{id}/requirements/{req_id}/analyses/{analysis_id}` — `{payload: <RequirementAnalysisPayload>}` → 200 updated. Only while `status == "draft"`; 409 otherwise. This is how a human edits the AI's draft output before approving.
+- `POST .../analyses/{analysis_id}/approve` — sets `status="approved"`, `approved_by`, `approved_at`. Only from `status == "draft"`; 409 otherwise.
+- `POST .../analyses/{analysis_id}/reject` — sets `status="rejected"`. Only from `status == "draft"`; 409 otherwise.
+
+The `RequirementAnalysisPayload` shape (`app/domains/ai/schemas.py`): `summary` (str),
+`business_rules` / `functional_conditions` / `edge_cases` / `automation_candidates` /
+`manual_candidates` (lists of `{statement, rationale}`), `risks` (list of
+`{statement, rationale, severity: low|medium|high}`), `ambiguities` (list of
+`{statement, clarifying_question}`), `missing_information` (list of str).
+
 ## Deviations from the original spec
 
 - **Last-admin protection is general, not just self-demotion.** The spec's example
@@ -166,4 +201,16 @@ Base path: `/api/v1`
   demotes/removes them — otherwise a two-admin project could still be dropped to
   zero admins by one admin demoting/removing the other. This is a strict superset
   of the required behavior.
+- **(Sprint 2) `AIAnalysis` carries an internal `sequence` column** (a Postgres
+  `GENERATED ALWAYS AS IDENTITY` bigint, never exposed via the API) used to determine
+  "most recently created analysis" instead of `created_at`. Two analyses triggered in
+  quick succession can land on the same `created_at` value (timestamp resolution),
+  which made `latest_analysis_status` and the analyses list's "newest first" order
+  non-deterministic when ordering by `created_at` alone; `sequence` is guaranteed
+  monotonically increasing in insertion order and fixes that.
+- **(Sprint 2) `PATCH` on requirements/analyses cannot explicitly null out a nullable
+  field**, matching the existing `PATCH /projects/{id}` convention (`ProjectUpdate`):
+  an omitted field and an explicit `null` are both treated as "leave unchanged."
+  Nullable fields (`business_objective`, `acceptance_criteria`) can only be set to a
+  value, not cleared back to `null`, via this endpoint.
 - Everything else follows the spec's API contract and architecture as written.

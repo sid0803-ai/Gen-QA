@@ -14,6 +14,7 @@ from app.core.db import Base
 # autogenerate/create_all inspects it. Add new domains' model modules here.
 from app.domains.identity import models as identity_models  # noqa: F401
 from app.domains.projects import models as projects_models  # noqa: F401
+from app.domains.requirements import models as requirements_models  # noqa: F401
 
 # this is the Alembic Config object, which provides access to values within
 # the .ini file in use.
