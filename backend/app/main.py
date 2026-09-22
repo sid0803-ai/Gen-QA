@@ -1,0 +1,29 @@
+"""FastAPI application entrypoint. Routers are mounted under /api/v1."""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import get_settings
+from app.domains.identity.router import router as identity_router
+from app.domains.projects.router import router as projects_router
+
+settings = get_settings()
+
+app = FastAPI(title=settings.project_name, version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allowed_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+API_V1_PREFIX = "/api/v1"
+
+app.include_router(identity_router, prefix=API_V1_PREFIX)
+app.include_router(projects_router, prefix=API_V1_PREFIX)
+
+
+@app.get("/health", tags=["health"])
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
