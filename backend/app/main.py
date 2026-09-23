@@ -8,6 +8,7 @@ from app.domains.environments.router import router as environments_router
 from app.domains.executions.router import router as executions_router
 from app.domains.identity.router import router as identity_router
 from app.domains.projects.router import router as projects_router
+from app.domains.reporting.router import router as reporting_router
 from app.domains.requirements.router import router as requirements_router
 from app.domains.testcases.router import router as testcases_router
 
@@ -32,6 +33,7 @@ app.include_router(testcases_router, prefix=API_V1_PREFIX)
 app.include_router(environments_router, prefix=API_V1_PREFIX)
 app.include_router(automation_router, prefix=API_V1_PREFIX)
 app.include_router(executions_router, prefix=API_V1_PREFIX)
+app.include_router(reporting_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["health"])

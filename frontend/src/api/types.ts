@@ -489,3 +489,82 @@ export interface ExecutionListParams {
   type?: ExecutionRunType;
   environment_id?: string;
 }
+
+// --- Reporting (Sprint 6) ---
+
+/** Breakdown of terminal execution statuses, keyed by status — 'none' covers test cases with no runs yet. */
+export interface StatusBreakdown {
+  passed: number;
+  failed: number;
+  blocked: number;
+  skipped: number;
+  error: number;
+  none: number;
+}
+
+/** Shape returned by GET /projects/{id}/dashboard. */
+export interface ProjectDashboard {
+  requirements_count: number;
+  test_cases_count: number;
+  automation_candidate_count: number;
+  automation_coverage_pct: number;
+  executions_total: number;
+  in_progress_count: number;
+  latest_status_breakdown: StatusBreakdown;
+  pass_rate_pct: number | null;
+  open_failures_count: number;
+  scheduled_jobs_count: number;
+}
+
+/** One zero-filled day of execution-outcome counts, oldest to newest. Shape returned by GET /projects/{id}/reports/trend. */
+export interface TrendPoint {
+  date: string;
+  passed: number;
+  failed: number;
+  blocked: number;
+  skipped: number;
+  error: number;
+  total: number;
+}
+
+/** Per-bucket outcome counts for one dimension value (testing level / category / priority). */
+export interface BreakdownEntry {
+  total: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  skipped: number;
+  error: number;
+  no_runs: number;
+}
+
+export interface TestingLevelBreakdownEntry extends BreakdownEntry {
+  testing_level: TestingLevel;
+}
+
+export interface CategoryBreakdownEntry extends BreakdownEntry {
+  category: ScenarioCategory;
+}
+
+export interface PriorityBreakdownEntry extends BreakdownEntry {
+  priority: Priority;
+}
+
+/** Shape returned by GET /projects/{id}/reports/breakdown. */
+export interface ProjectBreakdown {
+  by_testing_level: TestingLevelBreakdownEntry[];
+  by_category: CategoryBreakdownEntry[];
+  by_priority: PriorityBreakdownEntry[];
+}
+
+/** Shape returned by GET /projects/{id}/requirements/{reqId}/coverage. */
+export interface RequirementCoverage {
+  requirement_id: string;
+  test_case_count: number;
+  automated_count: number;
+  manual_count: number;
+  hybrid_count: number;
+  automation_script_approved_count: number;
+  latest_status_breakdown: StatusBreakdown;
+  pass_rate_pct: number | null;
+}

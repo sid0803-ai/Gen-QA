@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { App as AntApp, Button, Card, Form, Modal, Popconfirm, Select, Skeleton, Space, Typography } from 'antd';
+import { App as AntApp, Button, Card, Form, Modal, Popconfirm, Select, Skeleton, Space, Statistic, Typography } from 'antd';
 import {
   ApartmentOutlined,
   BulbOutlined,
@@ -43,6 +43,7 @@ import {
   useUpdateTestDesign,
 } from '../../hooks/useTestDesign';
 import { useProjects } from '../../hooks/useProjects';
+import { useRequirementCoverage } from '../../hooks/useReports';
 import { StatusBadge } from '../../components/StatusBadge';
 import { ReviewSection } from '../../components/ReviewSection';
 import { ApiError } from '../../api/client';
@@ -84,6 +85,7 @@ export default function RequirementDetailPage() {
   const { projectId, requirementId } = useParams();
   const navigate = useNavigate();
   const { data: requirement, isLoading } = useRequirement(projectId, requirementId);
+  const { data: coverage, isLoading: coverageLoading } = useRequirementCoverage(projectId, requirementId);
   const { data: projects } = useProjects();
   const updateRequirement = useUpdateRequirement(projectId, requirementId);
   const deleteRequirement = useDeleteRequirement(projectId);
@@ -280,6 +282,33 @@ export default function RequirementDetailPage() {
         <Field label="Description" value={requirement.description} />
         <Field label="Business objective" value={requirement.business_objective} />
         <Field label="Acceptance criteria" value={requirement.acceptance_criteria} />
+      </Card>
+
+      <Card
+        title="Test coverage"
+        size="small"
+        style={{ marginTop: 16 }}
+        data-testid="requirement-coverage-panel"
+      >
+        {coverageLoading ? (
+          <Skeleton active paragraph={{ rows: 1 }} />
+        ) : (
+          <Space size={32} wrap>
+            <Statistic title="Test cases" value={coverage?.test_case_count ?? 0} />
+            <Statistic title="Automated" value={coverage?.automated_count ?? 0} />
+            <Statistic title="Manual" value={coverage?.manual_count ?? 0} />
+            <Statistic title="Hybrid" value={coverage?.hybrid_count ?? 0} />
+            <Statistic
+              title="Automation scripts approved"
+              value={coverage?.automation_script_approved_count ?? 0}
+            />
+            {coverage?.pass_rate_pct != null ? (
+              <Statistic title="Pass rate" value={coverage.pass_rate_pct} suffix="%" />
+            ) : (
+              <Statistic title="Pass rate" value="No runs yet" />
+            )}
+          </Space>
+        )}
       </Card>
 
       <ReviewSection<RequirementAnalysisPayload, AnalysisDetail>

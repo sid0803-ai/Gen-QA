@@ -17,7 +17,7 @@ import TestPlansPage from './pages/stubs/TestPlansPage';
 import AutomationListPage from './pages/automation/AutomationListPage';
 import ExecutionHistoryPage from './pages/testing/ExecutionHistoryPage';
 import SchedulesPage from './pages/stubs/SchedulesPage';
-import ReportsPage from './pages/stubs/ReportsPage';
+import ReportsPage from './pages/reports/ReportsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
