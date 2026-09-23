@@ -7,9 +7,11 @@ from typing import Literal
 
 from app.domains.ai.provider import AIProvider, MockAIProvider
 from app.domains.ai.schemas import (
+    EnvironmentInput,
     FeasibilityStudyPayload,
     RequirementAnalysisPayload,
     RequirementInput,
+    TestCaseInput,
     TestDesignPayload,
     TestStrategyPayload,
 )
@@ -45,3 +47,8 @@ class AIService:
     ) -> TestDesignPayload:
         result = self._provider.generate_test_design(requirement, strategy, scope)
         return TestDesignPayload.model_validate(result)
+
+    def generate_playwright_script(
+        self, test_case: TestCaseInput, environment: EnvironmentInput | None = None
+    ) -> str:
+        return self._provider.generate_playwright_script(test_case, environment)

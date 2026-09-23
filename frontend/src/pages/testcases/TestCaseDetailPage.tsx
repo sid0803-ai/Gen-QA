@@ -32,6 +32,8 @@ import {
   TESTING_LEVEL_LABELS,
 } from '../../api/testCaseOptions';
 import { TestCaseFormFields } from './TestCaseFormFields';
+import { AutomationScriptSection } from './AutomationScriptSection';
+import { ExecutionsSection } from './ExecutionsSection';
 import type { TestCaseUpdateInput, TestCaseVersion } from '../../api/types';
 
 const { Title, Paragraph, Text } = Typography;
@@ -280,6 +282,10 @@ export default function TestCaseDetailPage() {
           ]}
         />
       </div>
+
+      <AutomationScriptSection projectId={projectId} testCaseId={testCaseId} canEdit={canEdit} />
+
+      <ExecutionsSection projectId={projectId} testCaseId={testCaseId} canEdit={canEdit} />
 
       {canEdit && (
         <Drawer

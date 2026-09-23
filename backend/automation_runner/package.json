@@ -1,0 +1,9 @@
+{
+  "name": "genqa-automation-runner",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Dedicated Playwright Test project the executions domain's Celery task (app.domains.executions.tasks) shells out to via `npx playwright test <spec> --reporter=json`. Not a standalone app - just a Playwright project root.",
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

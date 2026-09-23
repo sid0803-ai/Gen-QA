@@ -7,18 +7,21 @@ keyword heuristics - no real NLP/LLM call. A real LLM-backed provider
 without changing any caller; `app.domains.ai.service.AIService` is the only
 place that decides which provider to instantiate.
 """
+import json
 import re
 from abc import ABC, abstractmethod
 from typing import Literal
 
 from app.domains.ai.schemas import (
     AmbiguityItem,
+    EnvironmentInput,
     FeasibilityScenario,
     FeasibilityStudyPayload,
     RationaleItem,
     RequirementAnalysisPayload,
     RequirementInput,
     RiskItem,
+    TestCaseInput,
     TestDesignPayload,
     TestDesignScenario,
     TestingLevelScope,
@@ -62,6 +65,21 @@ class AIProvider(ABC):
         scenarios use. `scope` biases the generated scenarios' testing
         levels toward api/integration ("api"), ui/functional ("ui"), or a
         mix of both ("both")."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def generate_playwright_script(
+        self, test_case: TestCaseInput, environment: EnvironmentInput | None
+    ) -> str:
+        """Produce a genuinely runnable Playwright Test (TypeScript) source
+        file for the given test case. `environment`, when provided, supplies
+        a real `base_url` placeholder; when absent, a generic placeholder is
+        used instead. The returned script must actually navigate to
+        `environment.base_url` (or `process.env.BASE_URL` if set) so it
+        genuinely passes when that URL is reachable and genuinely fails/
+        errors when it isn't - the execution engine runs this script for
+        real, so a script that always trivially passes regardless of the
+        target defeats the whole point."""
         raise NotImplementedError
 
 
@@ -829,3 +847,68 @@ class MockAIProvider(AIProvider):
             )
 
         return TestDesignPayload(summary=summary, scope=scope, scenarios=scenarios[:10])
+
+    # --- Automation script generation (Sprint 5) --------------------------
+
+    def generate_playwright_script(
+        self, test_case: TestCaseInput, environment: EnvironmentInput | None
+    ) -> str:
+        """A genuinely runnable Playwright Test file: it navigates to the
+        real `base_url` (env var takes precedence so the execution engine
+        can override it per-run) and asserts the page actually left
+        'about:blank'. That single assertion is what makes this script
+        truthful rather than decorative - `page.goto()` throws when the
+        target is unreachable (DNS failure, connection refused, timeout),
+        which fails the test for real; when the target IS reachable, the
+        navigation succeeds and the final placeholder assertion passes
+        against the real loaded page. Every step/expected-result from the
+        test case is embedded as a review TODO, since the AI has no way to
+        know this application's actual selectors yet - a human fills those
+        in before this script is trusted for real regression coverage."""
+        placeholder_base_url = (environment.base_url if environment else None) or (
+            "https://example.invalid"
+        )
+
+        lines: list[str] = [
+            "import { test, expect } from '@playwright/test';",
+            "",
+            f"test({_ts_string(test_case.title)}, async ({{ page }}) => {{",
+            f"  // Preconditions: {test_case.preconditions or 'None specified.'}",
+            f"  await page.goto(process.env.BASE_URL ?? {_ts_string(placeholder_base_url)});",
+            "  await expect(page).not.toHaveURL('about:blank');",
+            "",
+        ]
+
+        if test_case.steps:
+            for index, step in enumerate(test_case.steps, start=1):
+                lines.append(f"  // Step {index}: {step}")
+                lines.append(
+                    "  // TODO: implement the real interaction for this step - the AI cannot know"
+                )
+                lines.append(
+                    "  // this application's actual selectors yet; this is a scaffold to review."
+                )
+                lines.append("")
+        else:
+            lines.append("  // No steps were recorded on this test case.")
+            lines.append("")
+
+        lines.append(f"  // Expected result: {test_case.expected_result or 'Not specified.'}")
+        lines.append(
+            "  // TODO: replace this placeholder assertion with a real check for the"
+        )
+        lines.append("  // expected result above.")
+        lines.append("  await expect(page.locator('body')).toBeVisible();")
+        lines.append("});")
+        lines.append("")
+        return "\n".join(lines)
+
+
+def _ts_string(value: str) -> str:
+    """Render `value` as a safe, valid TypeScript/JavaScript double-quoted
+    string literal. JSON string syntax is a valid subset of JS/TS string
+    syntax (same escaping rules for quotes/backslashes/control characters),
+    so `json.dumps` is a robust, dependency-free way to embed arbitrary
+    human-authored text (titles, steps, ...) into generated script source
+    without risking a broken/unsafe literal."""
+    return json.dumps(value)

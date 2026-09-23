@@ -366,3 +366,126 @@ export interface TestCaseVersion {
   edited_by: string;
   edited_at: string;
 }
+
+// --- Environments ---
+
+export interface Environment {
+  id: string;
+  project_id: string;
+  name: string;
+  base_url: string;
+  variables: Record<string, string>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnvironmentCreateInput {
+  name: string;
+  base_url: string;
+  variables?: Record<string, string>;
+}
+
+export type EnvironmentUpdateInput = Partial<EnvironmentCreateInput>;
+
+// --- Automation Script ---
+
+export type AutomationScriptStatus = 'draft' | 'approved';
+export type ScriptSource = 'ai' | 'human';
+
+export interface ScriptVersion {
+  version_number: number;
+  code: string;
+  source: ScriptSource;
+  created_by: string;
+  created_at: string;
+}
+
+/** Shape returned by GET /automation-script/versions — summary only, no `code`. */
+export interface ScriptVersionSummary {
+  version_number: number;
+  source: ScriptSource;
+  created_by: string;
+  created_at: string;
+}
+
+export interface AutomationScript {
+  id: string;
+  test_case_id: string;
+  status: AutomationScriptStatus;
+  current_version: ScriptVersion;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationScriptGenerateInput {
+  environment_id?: string;
+}
+
+export interface AutomationScriptUpdateInput {
+  code: string;
+}
+
+// --- Executions ---
+
+/** Distinguishes how an execution was run — separate concept from a test case's own `execution_type` field. */
+export type ExecutionRunType = 'manual' | 'automated';
+
+export type ExecutionStatus =
+  | 'pending'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'blocked'
+  | 'skipped'
+  | 'error';
+
+export const TERMINAL_EXECUTION_STATUSES: ExecutionStatus[] = [
+  'passed',
+  'failed',
+  'blocked',
+  'skipped',
+  'error',
+];
+
+export type ManualExecutionResultStatus = 'passed' | 'failed' | 'blocked' | 'skipped';
+
+export interface Execution {
+  id: string;
+  project_id: string;
+  test_case_id: string;
+  environment_id: string;
+  type: ExecutionRunType;
+  status: ExecutionStatus;
+  triggered_by: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  actual_result: string | null;
+  comments: string | null;
+  logs: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export type ExecutionCreateInput =
+  | {
+      test_case_id: string;
+      environment_id: string;
+      type: 'manual';
+      status: ManualExecutionResultStatus;
+      actual_result?: string;
+      comments?: string;
+    }
+  | {
+      test_case_id: string;
+      environment_id: string;
+      type: 'automated';
+    };
+
+export interface ExecutionListParams {
+  test_case_id?: string;
+  status?: ExecutionStatus;
+  type?: ExecutionRunType;
+  environment_id?: string;
+}

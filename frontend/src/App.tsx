@@ -8,13 +8,14 @@ import ProjectDashboardPage from './pages/projects/ProjectDashboardPage';
 import ProjectSettingsLayout from './pages/projects/ProjectSettingsLayout';
 import ProjectMembersPage from './pages/projects/ProjectMembersPage';
 import ProjectGeneralSettingsPage from './pages/projects/ProjectGeneralSettingsPage';
+import ProjectEnvironmentsPage from './pages/projects/ProjectEnvironmentsPage';
 import RequirementsListPage from './pages/requirements/RequirementsListPage';
 import RequirementDetailPage from './pages/requirements/RequirementDetailPage';
 import TestCasesListPage from './pages/testcases/TestCasesListPage';
 import TestCaseDetailPage from './pages/testcases/TestCaseDetailPage';
 import TestPlansPage from './pages/stubs/TestPlansPage';
-import AutomationPage from './pages/stubs/AutomationPage';
-import TestingPage from './pages/stubs/TestingPage';
+import AutomationListPage from './pages/automation/AutomationListPage';
+import ExecutionHistoryPage from './pages/testing/ExecutionHistoryPage';
 import SchedulesPage from './pages/stubs/SchedulesPage';
 import ReportsPage from './pages/stubs/ReportsPage';
 import NotFoundPage from './pages/NotFoundPage';
@@ -39,13 +40,14 @@ export default function App() {
             <Route path="/projects/:projectId/test-cases" element={<TestCasesListPage />} />
             <Route path="/projects/:projectId/test-cases/:testCaseId" element={<TestCaseDetailPage />} />
             <Route path="/projects/:projectId/test-plans" element={<TestPlansPage />} />
-            <Route path="/projects/:projectId/automation" element={<AutomationPage />} />
-            <Route path="/projects/:projectId/testing" element={<TestingPage />} />
+            <Route path="/projects/:projectId/automation" element={<AutomationListPage />} />
+            <Route path="/projects/:projectId/testing" element={<ExecutionHistoryPage />} />
             <Route path="/projects/:projectId/schedules" element={<SchedulesPage />} />
             <Route path="/projects/:projectId/reports" element={<ReportsPage />} />
             <Route path="/projects/:projectId/settings" element={<ProjectSettingsLayout />}>
               <Route index element={<Navigate to="members" replace />} />
               <Route path="members" element={<ProjectMembersPage />} />
+              <Route path="environments" element={<ProjectEnvironmentsPage />} />
               <Route path="general" element={<ProjectGeneralSettingsPage />} />
             </Route>
           </Route>

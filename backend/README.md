@@ -1,9 +1,14 @@
-# Gen-QA Backend — Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4
+# Gen-QA Backend — Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5
 
 FastAPI modular-monolith backend. Sprint 1 implemented two domains, Sprint 2 added two
-more, Sprint 3 extended `requirements`/`ai` with Feasibility Study + Test Strategy, and
-Sprint 4 extends them again with a fourth review stage (Test Design) plus a brand-new,
-project-scoped domain (Test Case Repository):
+more, Sprint 3 extended `requirements`/`ai` with Feasibility Study + Test Strategy,
+Sprint 4 extended them again with a fourth review stage (Test Design) plus a brand-new,
+project-scoped domain (Test Case Repository), and Sprint 5 is a bigger architectural
+jump: it adds a lightweight Environments concept, real per-test-case Playwright/
+TypeScript script generation + versioning, and an actual Celery + Redis execution
+engine that runs those scripts as real subprocesses and records genuine pass/fail
+results — not simulated. Every prior sprint was "AI drafts a JSONB payload, human
+approves it"; Sprint 5 is the first time this backend actually *executes* anything.
 
 - **identity** (Sprint 1) — user registration, login (OAuth2 password flow), JWT
   access/refresh tokens, `GET /auth/me`.
@@ -34,8 +39,35 @@ project-scoped domain (Test Case Repository):
   **Sprint 4 domain-placement decision** below) — every test case still carries a
   required `requirement_id` for traceability, and optionally a `test_design_id` when
   it was AI-promoted rather than authored manually.
+- **environments** (Sprint 5, new domain) — project-scoped `Environment` rows
+  (`name`, `base_url`, a plain `variables` dict) that test executions run against.
+  Plain CRUD, same role convention as every other domain (`viewer` reads, `member`
+  creates/edits, `admin` deletes). See the **security scope cut** note below —
+  `variables` is intentionally **not encrypted** this sprint.
+- **automation** (Sprint 5, new domain) — one `AutomationScript` per `TestCase`
+  (one-to-one), draft → approved, with a `ScriptVersion` history mirroring
+  `TestCaseVersion`'s own "full snapshot per version" pattern exactly. Nested under a
+  test case (`/projects/{id}/test-cases/{id}/automation-script`). `AIProvider` gained
+  `generate_playwright_script()` (Sprint 5): the mock's output is a **genuinely
+  runnable Playwright Test file**, not decorative text — see **the execution engine**
+  below for why that matters.
+- **executions** (Sprint 5, new domain) — project-scoped `Execution` records, either
+  `type="manual"` (a human recording something that already happened, immediately
+  `completed_at`-stamped) or `type="automated"` (enqueues a **real Celery task** that
+  runs the test case's current *approved* automation script as a real
+  `npx playwright test` subprocess against the given environment, and updates the row
+  as it progresses: `pending` → `running` → a genuine terminal status). See **the
+  execution engine** below.
+- **`app/worker.py`** (Sprint 5) — the Celery application instance
+  (`celery_app = Celery("genqa", broker=..., backend=...)`), reading `REDIS_URL` from
+  `app.core.config.Settings` (wired since Sprint 1, unused until now). The task itself
+  (`run_automated_execution`) delegates to `app.domains.executions.tasks`, which holds
+  the actual execution-engine logic.
+- **`backend/automation_runner/`** (Sprint 5) — a small, dedicated Playwright Test
+  project (its own `package.json` + `playwright.config.ts`) that the executions
+  domain's Celery task shells out to. See **the execution engine** below.
 
-Every future domain (executions, ...) will be added the same way:
+Every future domain will be added the same way:
 `app/domains/<name>/{models,schemas,service,router}.py`, mounted under `/api/v1` in
 `app/main.py`, and — if it stores project-scoped data — reading/writing through a
 `repository.py` that always takes `project_id` + the requesting user's id and
@@ -96,7 +128,9 @@ connection) and asserts the resulting codes are unique with no gaps.
 ## Stack
 
 Python 3.12, FastAPI, SQLAlchemy 2.0 (async, `asyncpg` driver), Alembic, Pydantic v2,
-PyJWT + passlib[bcrypt], pytest + httpx + pytest-asyncio.
+PyJWT + passlib[bcrypt], pytest + httpx + pytest-asyncio, **Celery 5.4 + Redis**
+(Sprint 5), and a small **Node.js/Playwright Test** project (`automation_runner/`,
+Sprint 5) the execution engine shells out to.
 
 ## Project layout
 
@@ -104,6 +138,7 @@ PyJWT + passlib[bcrypt], pytest + httpx + pytest-asyncio.
 backend/
   app/
     main.py                      FastAPI app, routers mounted under /api/v1
+    worker.py                    Sprint 5: Celery app instance + run_automated_execution task
     core/
       config.py                  Settings (env vars / .env)
       security.py                Password hashing, JWT encode/decode
@@ -115,13 +150,24 @@ backend/
       requirements/               Requirement + AIAnalysis + FeasibilityStudy +
                                     TestStrategy + TestDesign models, CRUD + all four
                                     review lifecycles
-      ai/                          AIProvider ABC, MockAIProvider, AIService
+      ai/                          AIProvider ABC, MockAIProvider, AIService (Sprint 5:
+                                    + generate_playwright_script())
       testcases/                   TestCase + TestCaseVersion + TestCaseCounter
                                     models, project-scoped CRUD/search repository
+      environments/                 Sprint 5: Environment model, project-scoped CRUD
+      automation/                    Sprint 5: AutomationScript + ScriptVersion,
+                                    per-test-case script generation/edit/approve
+      executions/                    Sprint 5: Execution model + repository/service,
+                                    tasks.py holds the real execution engine
+  automation_runner/              Sprint 5: dedicated Playwright Test project the
+                                    execution engine shells out to (own package.json +
+                                    playwright.config.ts; node_modules/ gitignored)
   alembic/                       Migrations
   tests/                         pytest suite (incl. test_project_isolation.py,
                                    test_feasibility.py, test_strategy.py,
-                                   test_test_design.py, test_test_cases.py)
+                                   test_test_design.py, test_test_cases.py,
+                                   test_environments.py, test_automation.py,
+                                   test_executions.py)
   Dockerfile
   requirements.txt / requirements-dev.txt
   .env.example
@@ -222,6 +268,93 @@ DATABASE_URL=postgresql+asyncpg://genqa:genqa@localhost:5432/genqa_test pytest
 `tests/test_project_isolation.py` is the critical suite: it proves user A gets a
 plain 404 (never 403, never data) on every read/write path into user B's project,
 and that `GET /projects` for user A never includes user B's projects.
+
+## 7. Sprint 5: the execution engine (Celery + Redis + Playwright)
+
+### Set up `automation_runner/` once
+
+The executions domain's Celery task shells out to a dedicated Playwright Test
+project at `backend/automation_runner/`. Install its dependency once:
+
+```bash
+cd backend/automation_runner
+npm install
+```
+
+`playwright.config.ts` is configured to use the **system-installed Chrome**
+(`channel: 'chrome'` on the `chromium` project) instead of a downloaded Chromium
+build, so `npx playwright test` works without ever needing `playwright install` to
+fetch large browser binaries — the same trick this project's frontend E2E
+verification has relied on in every prior sprint, for the same sandbox-can't-
+download-large-binaries reason. If Chrome isn't at the default Windows install
+location, or `channel: 'chrome'` doesn't resolve it on your machine, point
+`use.launchOptions.executablePath` at the real path instead (e.g.
+`C:\Program Files\Google\Chrome\Application\chrome.exe`).
+
+### Running tests (no real Redis needed)
+
+`tests/conftest.py` sets `celery_app.conf.task_always_eager = True` (and
+`task_eager_propagates = True`) for the whole test session. This is Celery's own
+documented synchronous-execution test mode, not a shortcut around correctness: when
+an automated execution is created, `run_automated_execution.delay(...)` runs the
+**real task function** (real script-to-temp-file, real `npx playwright test`
+subprocess, real JSON-reporter parsing) synchronously, in-process, instead of via an
+actual broker round-trip. `pytest` therefore never needs a running Redis at all —
+just `automation_runner/`'s `npm install` having been run once (above) and a system
+Chrome being present.
+
+`tests/test_executions.py::test_automated_execution_against_reachable_url_passes` /
+`..._against_unreachable_url_fails_or_errors` are the tests that actually prove the
+pass/fail signal is genuine: each spins up a trivial local `http.server` (or points
+at an invalid `http://127.0.0.1:1` target), runs a *real* mock-AI-generated script
+against it end-to-end, and asserts the resulting `Execution.status` is genuinely
+derived from that run (`"passed"` vs `"failed"`/`"error"`) — not hardcoded. See
+those tests' module docstring for why they use their own dedicated DB engine/
+sessions (real commits) rather than the shared `client`/`db_session` fixture: the
+Celery task (even in eager mode) opens its own separate DB connection to look up the
+execution/script/environment, which cannot see data still sitting in the shared
+fixture's uncommitted, SAVEPOINT-wrapped outer transaction.
+
+### Running a real worker process (dev/deployment)
+
+Point `REDIS_URL` (in `backend/.env`) at a real, reachable Redis, then start a
+worker:
+
+```bash
+cd backend
+celery -A app.worker worker --loglevel=info
+```
+
+(On Windows, add `--pool=solo` — Celery's default `prefork` pool isn't supported
+there.)
+
+### What was actually proven, and how (verification note, not a permanent script)
+
+This sprint's own verification went a step further than eager mode, to prove the
+*actual Celery/Redis wiring* works, not just the task function in isolation:
+
+- **`pgserver`** (embedded Postgres, pip-installable, same as every prior sprint's
+  backend build) provided the database.
+- **`redislite`** (the pip-installable embedded Redis this task suggested first) does
+  **not support Windows** (`the redislite module is not supported on the 'win32'
+  platform` — confirmed by attempting the install) and could not be used.
+- As a fallback that still proves a *real* Redis broker (rather than settling for
+  eager-mode-only verification), a portable Windows Redis build
+  (`tporadowski/redis`, a maintained Windows port, downloaded as a zip — no
+  installer, no admin rights, no Docker/WSL2) provided a genuine `redis-server.exe`.
+  A real `celery -A app.worker worker --loglevel=info --pool=solo` process was
+  started against it, and a from-scratch script created a project/test
+  case/environment (real commits, its own DB engine — no eager mode, no
+  `tests/conftest.py` import), generated + approved a script, pointed an environment
+  at a local `http.server`, called `create_automated_execution()`, and polled the
+  `Execution` row. It genuinely flowed `pending` → `running` → `passed` through the
+  real broker and a real separate worker process (confirmed in the worker's own log:
+  `Task run_automated_execution[...] received` / `... succeeded in 14.0s`), with
+  `duration_ms` and no `error_message` — not simulated, not eager. Everything
+  downloaded/started for this (the redis-server binary, the worker process, the
+  Redis server process) was torn down and deleted afterward; it is **not** part of
+  this repository or its permanent dependency set (`redislite` was never
+  successfully installed, so it isn't in `requirements-dev.txt` either).
 
 ## API contract summary
 
@@ -361,6 +494,91 @@ stage above) — `viewer` reads, `member` creates/edits/approves, `admin` delete
   ordered (oldest-to-newest) list reads as "what the test case looked like at each
   point."
 
+**Environments** (Sprint 5, new domain; project-scoped) — `viewer` reads, `member`
+creates/edits, `admin` deletes.
+- `POST /projects/{id}/environments` — `{name, base_url, variables?}` → 201.
+- `GET /projects/{id}/environments` → 200 list.
+- `GET /projects/{id}/environments/{env_id}` → 200 detail.
+- `PATCH /projects/{id}/environments/{env_id}` — any subset of `{name, base_url,
+  variables}` → 200. Same "omitted/null both mean leave unchanged" convention as
+  every other `PATCH` in this codebase.
+- `DELETE /projects/{id}/environments/{env_id}` — admin only → 204.
+- `variables` is a plain `dict[str, str]` - **not encrypted**. See **Known scope
+  cuts** below.
+
+**Automation Script** (Sprint 5, new `automation` domain; nested under a test case,
+mirrors the requirement-review-stage draft/edit/approve shape) — `viewer` reads,
+`member` generates/edits/approves.
+- `POST /projects/{id}/test-cases/{tc_id}/automation-script` — body
+  `{environment_id?}` (used only as generation context - so the script's `base_url`
+  placeholder is meaningful - never persisted onto the script itself) → runs
+  `MockAIProvider.generate_playwright_script` and creates a new `source="ai"`
+  `ScriptVersion`, `status="draft"`. **201** the first time a script is generated for
+  a test case (creates the `AutomationScript` row); **200** on every subsequent
+  regeneration.
+- `GET .../automation-script` → 200 `{id, test_case_id, status, current_version:
+  {version_number, code, source, created_by, created_at}, created_at, updated_at}`,
+  or 404 if none exists yet.
+- `PATCH .../automation-script` — `{code}` → 200. A human edit: creates a new
+  `source="human"` `ScriptVersion` and resets `status="draft"` - any edit (AI
+  regenerate or human edit) always requires fresh approval, same "never silently
+  re-approve stale content" invariant used everywhere else in this codebase.
+- `POST .../automation-script/approve` → 200 `status="approved"`; 409 if already
+  approved.
+- `GET .../automation-script/versions` → 200 list of `{version_number, source,
+  created_by, created_at}` (no `code` - use the detail endpoint's `current_version`
+  for that), newest first.
+
+The generated Playwright script is a genuinely runnable `.spec.ts` file: it
+navigates to `process.env.BASE_URL ?? <environment.base_url or a placeholder>` and
+asserts the page left `about:blank`, embeds each step/expected-result as a
+`// TODO:` review comment (the AI can't know this application's real selectors yet),
+and ends with a placeholder `body` visibility assertion. It genuinely passes when
+the target is reachable and genuinely fails/errors when it isn't - see **the
+execution engine** section above.
+
+**Executions** (Sprint 5, new domain; project-scoped, references a test case + an
+environment) — `viewer` reads, `member` creates. No update/delete endpoint - an
+execution is an immutable record.
+- `POST /projects/{id}/executions` — two shapes depending on `type`:
+  - `type="manual"`: `{test_case_id, environment_id, type: "manual", status:
+    "passed"|"failed"|"blocked"|"skipped", actual_result?, comments?}` → 201,
+    already `completed_at`/`started_at`-stamped immediately (a human is recording
+    something that already happened; `duration_ms` stays `null` - there's nothing
+    real to measure). `status` is required for a manual execution and restricted to
+    the four terminal values above (422 otherwise).
+  - `type="automated"`: `{test_case_id, environment_id, type: "automated"}` → 201
+    with `status="pending"`, and **enqueues a Celery task** that actually runs the
+    test case's current *approved* automation script against the given environment.
+    409 if the test case has no approved automation script yet. `status`/
+    `actual_result`/`comments` must be omitted for this shape (422 otherwise - those
+    are manual-only fields).
+- `GET /projects/{id}/executions` — list, filters `test_case_id?`, `status?`,
+  `type?`, `environment_id?`, newest first.
+- `GET /projects/{id}/executions/{id}` — detail; the frontend polls this for
+  automated executions until `status` leaves `pending`/`running`.
+
+`Execution` fields: `id, project_id, test_case_id, environment_id, type, status,
+triggered_by, started_at, completed_at, duration_ms, actual_result, comments, logs,
+error_message, created_at`. `actual_result`/`comments` are manual-only; `logs`
+(captured stdout/stderr, truncated) and `error_message` are automated-only.
+
+## Known scope cuts (Sprint 5)
+
+- **`Environment.variables` is stored as plain JSONB, not encrypted.** This is
+  exactly the kind of field (API keys, test-account passwords) the architecture's
+  own security section eventually wants encrypted-at-rest (KMS/envelope encryption,
+  rotation, etc.), but building that story is out of scope for this sprint. Documented
+  here explicitly as a security follow-up, not an oversight - see
+  `app/domains/environments/models.py`'s module docstring.
+- **No screenshot/video/trace artifact capture.** Capturing Playwright artifacts
+  needs object storage (S3/MinIO), which isn't built yet. `Execution.logs`/
+  `error_message` (text only, from stdout/stderr and the JSON reporter) are the whole
+  result surface this sprint. A clear follow-up for a later sprint once storage
+  exists.
+- **No scheduling/cron** and **no reporting/dashboards** - explicitly out of scope
+  per this sprint's own task description, left for later sprints.
+
 ## Deviations from the original spec
 
 - **Last-admin protection is general, not just self-demotion.** The spec's example
@@ -425,6 +643,41 @@ stage above) — `viewer` reads, `member` creates/edits/approves, `admin` delete
   (autogenerate has no way to know the type already exists) and to make sure
   `downgrade()` does **not** drop `requirement_priority` (it isn't this migration's
   type to drop - `requirements.priority` still depends on it).
+- **(Sprint 5) The Celery task always runs its DB work through its own dedicated,
+  short-lived engine** (`app.domains.executions.tasks._run()`), never the shared
+  `app.core.db.engine`/`AsyncSessionLocal` singletons. `run_automated_execution_sync()`
+  is called from two very different contexts - a real Celery worker process, and
+  `task_always_eager` test mode, where `.delay()` runs the task inline from *inside*
+  an already-running asyncio event loop (pytest-asyncio) - and always executes the
+  task's real logic inside a brand-new thread with its own fresh `asyncio.run()` loop
+  (see that function's docstring for why `asyncio.run()` can't be called directly on
+  the calling thread in the eager-mode case). Reusing one shared, long-lived asyncpg
+  connection pool across many different event loops (a new one per task invocation)
+  would eventually hand a task a connection bound to an earlier, now-closed loop and
+  crash with "Future ... attached to a different loop" - the same class of bug
+  `tests/conftest.py` documents and works around for its own per-test engines: a fresh
+  engine, created and disposed within the task's own single loop, sidesteps it
+  entirely.
+- **(Sprint 5) Version lookups in the `automation` domain always run a fresh,
+  explicit `SELECT` against `ScriptVersion`**, never `AutomationScript.versions` (the
+  ORM relationship collection) - see `app/domains/automation/repository.py`'s module
+  docstring. Under an `AsyncSession` with `expire_on_commit=False` (as this codebase's
+  test fixtures use, reusing one session across many simulated "requests"), an
+  already-loaded relationship collection on an identity-mapped parent object is not
+  automatically refreshed after a later commit adds more child rows through a plain
+  `db.add(child)` rather than via the relationship attribute itself - a subsequent
+  read of that stale collection silently missed the just-added version during this
+  sprint's own test-writing (`test_patch_creates_human_version_and_resets_to_draft`
+  initially failed exactly this way). `app.domains.testcases.repository
+  .update_test_case()` already avoids this same trap via an explicit `COUNT` query;
+  the automation domain follows that established precedent instead of the ORM
+  relationship.
+- **(Sprint 5) `executions.models.ExecutionKind`, not `ExecutionType`, names the
+  manual/automated distinction on `Execution.type`.** `app.domains.testcases.models`
+  already defines an `ExecutionType` enum (`manual|automation|hybrid`) for a
+  *different* concept - a test case's intended execution mode - and reusing that name
+  for "what kind of execution record is this" would have been confusing alongside it,
+  so Sprint 5 introduces a distinctly-named enum instead.
 - Everything else follows the spec's API contract and architecture as written.
 
 ## Known pre-existing issue found during Sprint 3 verification (not fixed - out of scope)
@@ -445,3 +698,8 @@ then `upgrade head`, straight after `upgrade head`), which is what Sprint 3's ta
 required. **Sprint 4's own migration (`5593e511c60c`) was verified the same way**
 (`upgrade head` → `downgrade -1` → `upgrade head`, all clean) against a real Postgres
 instance (`pgserver`, embedded, no Docker/WSL2 available in that sandbox).
+**Sprint 5's own migration (`57e6f76344ad`) was verified the same way**
+(`upgrade head` → `downgrade -1` → `upgrade head`, all clean), also against a real
+`pgserver` instance, with `downgrade()` explicitly dropping this migration's four new
+Postgres ENUM types (`automation_script_status`, `execution_kind`, `execution_status`,
+`script_source`).

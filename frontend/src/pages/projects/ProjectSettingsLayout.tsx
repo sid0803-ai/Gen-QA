@@ -6,7 +6,11 @@ export default function ProjectSettingsLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const activeKey = location.pathname.endsWith('/general') ? 'general' : 'members';
+  const activeKey = location.pathname.endsWith('/general')
+    ? 'general'
+    : location.pathname.endsWith('/environments')
+      ? 'environments'
+      : 'members';
 
   return (
     <div>
@@ -18,6 +22,7 @@ export default function ProjectSettingsLayout() {
         onChange={(key) => navigate(`/projects/${projectId}/settings/${key}`)}
         items={[
           { key: 'members', label: 'Members' },
+          { key: 'environments', label: 'Environments' },
           { key: 'general', label: 'Project settings' },
         ]}
       />

@@ -23,6 +23,8 @@ const STATUS_COLORS: Record<string, string> = {
   failed: 'red',
   blocked: 'orange',
   skipped: 'default',
+  running: 'blue',
+  error: 'red',
   // requirement priority
   low: 'blue',
   medium: 'gold',
@@ -44,6 +46,8 @@ const STATUS_LABELS: Record<string, string> = {
   failed: 'Failed',
   blocked: 'Blocked',
   skipped: 'Skipped',
+  running: 'Running',
+  error: 'Error',
   low: 'Low',
   medium: 'Medium',
   high: 'High',

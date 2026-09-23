@@ -36,6 +36,39 @@ server state, Zustand for local auth/UI state, react-router-dom for routing.
 - Test Design, Test Cases, Test Plans, Automation, Testing, Schedules, and Reports still
   render a "Coming soon" placeholder — no functionality yet, by design.
 
+**Sprint 5 "Environments + Automation Script + Executions":**
+
+- **Environments** (`/projects/:projectId/settings/environments`, a new Settings tab):
+  a simple table (name, base URL, variable count) with create/edit (member/admin) and
+  delete (admin-only, confirm) via a modal — name, base URL, and a key-value list editor
+  (`src/components/KeyValueListEditor.tsx`) for `variables`. Needed before anything can
+  execute — the Automation Script and Executions sections both key off the project's
+  environment list.
+- **Automation Script** section on the Test Case detail page: "Generate Script" (with an
+  environment picker used as generation context) creates or regenerates a Playwright
+  script; the current version's code renders in a plain monospace `Input.TextArea`
+  (deliberately not a full code-editor library this sprint — keeps bundle size/scope
+  down), editable by member/admin, with "Save" (PATCH — resets status to draft) and
+  "Approve" (draft only) actions plus a status badge. A lazy-loaded Version History list
+  shows version number, AI/Human source tag, author, and date. If the project has no
+  environments yet, an inline hint points at Project Settings > Environments.
+- **Executions** section, below Automation Script: a shared environment picker; a manual
+  recording mini-form (status/actual result/comments -> "Record Result"); a "Run" button
+  for a real automated execution, enabled only once the test case has an *approved*
+  script and an environment is selected (disabled with a tooltip otherwise) — triggering
+  it polls the execution every ~2s (via TanStack Query's `refetchInterval`, stopping once
+  the status is terminal) and shows a live spinner/status badge. An execution history
+  table below shows every past execution for this test case, expandable per-row for
+  `actual_result`/`comments` (manual) or `logs`/`error_message` (automated).
+- **`/projects/:projectId/automation`** (replaces the old stub): project-wide read-mostly
+  table of every test case's automation script status ("None"/Draft/Approved) and last
+  execution status/date, with automation-candidate/script-status filters.
+- **`/projects/:projectId/testing`** (replaces the old stub): project-wide execution
+  history across all test cases, with status/type/environment filters wired to
+  `useSearchParams` (deep-linkable), same pattern as the Test Cases list filters.
+- `StatusBadge` extended with `running` and `error` (draft/approved/passed/failed/
+  blocked/skipped/pending already existed from prior sprints' vocabulary).
+
 ## Prerequisites
 
 - Node.js 20+ and npm (or Docker, see below).
@@ -79,21 +112,28 @@ alongside it (`docker compose up`) for a full local stack.
 ```
 src/
   api/            typed fetch client + endpoint functions (auth.ts, projects.ts,
-                   requirements.ts) + shared types + priority.ts (Select options)
+                   requirements.ts, environments.ts, automationScript.ts, executions.ts, ...)
+                   + shared types + priority.ts (Select options)
   auth/           useAuth() hook, AuthProvider (bootstraps session on load), ProtectedRoute
   store/          zustand authStore: tokens, current user, selected project id
   hooks/          React Query hooks (useProjects, useProjectMembers, useRequirements,
-                   useAnalyses, ...)
+                   useAnalyses, useEnvironments, useAutomationScript, useExecutions, ...)
   layout/         AppLayout (Ant Design Layout), Sidebar (nav), TopBar (project switcher + user menu)
   components/     StatTile, StatusBadge, ComingSoonPage, ApprovalPanel (generic
-                   draft/approve/reject chrome — reusable by later sprints)
+                   draft/approve/reject chrome — reusable by later sprints),
+                   KeyValueListEditor (Environment `variables` editor)
   pages/
     auth/         LoginPage, RegisterPage
     projects/     ProjectsListPage, ProjectDashboardPage, ProjectSettingsLayout,
-                   ProjectMembersPage, ProjectGeneralSettingsPage
+                   ProjectMembersPage, ProjectGeneralSettingsPage, ProjectEnvironmentsPage
     requirements/ RequirementsListPage, RequirementDetailPage, AnalysisPayloadView
                    (renders/edits the structured analysis payload), RequirementFormFields
+    testcases/    TestCasesListPage, TestCaseDetailPage, AutomationScriptSection,
+                   ExecutionsSection
+    automation/   AutomationListPage (project-wide automation overview)
+    testing/      ExecutionHistoryPage (project-wide execution history)
     stubs/        "Coming soon" placeholder pages for the rest of the product nav
+                   (Test Plans, Schedules, Reports)
 ```
 
 ## Manual verification checklist
@@ -139,6 +179,23 @@ Exercised end-to-end against a stub/mock server matching the API contract (see
 14. As a viewer on the same project: "New Requirement", "Edit", "Delete", and "Analyze"
     are all hidden; the requirement and its latest analysis are still fully visible,
     read-only.
+15. `/projects/:id/settings/environments`: create an environment (name, base URL, a
+    key-value variable), edit it, and (as admin) delete it with a confirm prompt; as a
+    viewer, all of that is hidden and only a read-only table shows.
+16. On a Test Case's detail page: "Generate Script" (environment picker as context)
+    produces a draft script whose code renders in the textarea; editing it enables
+    "Save" (status stays/returns to Draft); "Approve" flips the status badge to
+    Approved and hides itself; a "Version History" collapse lazily lists v1 (AI) and
+    v2 (Human, after the edit) with author/date.
+17. In Executions: pick the environment, record a manual result (e.g. Passed) -> it
+    appears immediately in the history table; click "Run" (enabled only once the
+    script is Approved and an environment is picked) -> a live spinner + "Pending" ->
+    "Running" -> terminal badge sequence plays out via polling, and the finished
+    execution appears in the history table without a manual refresh.
+18. `/projects/:id/automation` lists the test case with its script status (Approved)
+    and last execution status/date; `/projects/:id/testing` lists both executions
+    (manual + automated), and filtering by Type=Automated narrows to one row and
+    updates the URL query string.
 
 ## Known deviations / simplifications (V1)
 
@@ -168,6 +225,31 @@ Exercised end-to-end against a stub/mock server matching the API contract (see
   brief) — verified via manual review of the contract plus a local mock server. If
   the live backend's response shapes differ in any way from the contract (e.g. null
   vs. omitted `description`, date formats), check `src/api/types.ts` first.
+- **"No automation script yet" is an expected 404**: per the contract, `GET
+  .../automation-script` 404s until one is generated. `useAutomationScript` treats that
+  404 as a normal "none yet" result (resolves to `null`, no error surfaced to the
+  user) — but the browser's own devtools console still logs a "Failed to load
+  resource: 404" line for that network response regardless of the app catching it.
+  That log line is an artifact of the browser's network panel, not an application
+  error; it shows up once per test case per page load until a script exists.
+- **Automation overview has no bulk endpoint to call**: the contract only exposes
+  automation-script status per test case, so `useAutomationScriptsByTestCase`
+  (used by the project-wide Automation page) fans out one request per test case,
+  sharing the same query key/cache as the test case detail page. Fine at the scale
+  this sprint targets; a future sprint should ask for a bulk endpoint if the test
+  case repository grows large.
+- **Automation Script version history**: the contract doesn't fully pin down whether
+  a `PATCH` (manual edit) bumps `current_version`'s version number or just mutates it
+  in place. This frontend treats every successful generate *and* every successful
+  save as producing a new version (AI-sourced for generate, Human-sourced for save),
+  so the Version History list is meaningfully populated — adjust
+  `src/api/automationScript.ts`/the mock server's version bookkeeping if the real
+  backend's behavior differs.
+- **`KeyValueListEditor`** keeps its rows in local component state rather than
+  deriving them fresh from `value` on every render, specifically so a freshly-added
+  row with an empty key doesn't immediately vanish (a `Record<string, string>` can't
+  represent an empty-keyed row, so naively deriving rows straight from the emitted
+  value would drop it the instant it's added).
 
 ## Available scripts
 

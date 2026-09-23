@@ -146,3 +146,23 @@ class TestDesignPayload(BaseModel):
     summary: str
     scope: Literal["api", "ui", "both"]
     scenarios: list[TestDesignScenario] = Field(default_factory=list)
+
+
+# --- Automation script generation (Sprint 5) ---------------------------------
+#
+# Minimal, ai-domain-owned views of a TestCase/Environment, mirroring
+# `RequirementInput`'s own decoupling rationale (see this module's docstring):
+# the ai domain deliberately does not import `app.domains.testcases.models` or
+# `app.domains.environments.models` - only `app.domains.automation.service`
+# knows how to build these from the real ORM rows.
+
+
+class TestCaseInput(BaseModel):
+    title: str
+    preconditions: str = ""
+    steps: list[str] = Field(default_factory=list)
+    expected_result: str = ""
+
+
+class EnvironmentInput(BaseModel):
+    base_url: str

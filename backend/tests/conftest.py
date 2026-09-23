@@ -26,6 +26,20 @@ TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 
 from app.core.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.worker import celery_app  # noqa: E402
+
+# Sprint 5 (executions domain): route every Celery task through
+# `task_always_eager` for the whole test session, so pytest never needs a
+# real Redis broker - this is Celery's own documented synchronous-execution
+# test mode, not a shortcut around correctness. It still executes the real
+# `run_automated_execution` task function/logic (writes the real script to
+# `backend/automation_runner/tests/`, runs a real `npx playwright test`
+# subprocess, parses real JSON reporter output), just inline instead of via
+# a broker round-trip. A from-scratch, real-Redis-backed smoke test (via
+# `redislite`) separately proved the actual Celery wiring once, outside of
+# pytest - see backend/README.md.
+celery_app.conf.task_always_eager = True
+celery_app.conf.task_eager_propagates = True
 
 # NOTE: we deliberately do *not* share one asyncpg engine across tests.
 # create_async_engine()'s pool binds internal asyncio primitives (locks,

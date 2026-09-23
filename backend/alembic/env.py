@@ -22,6 +22,13 @@ from app.domains.testcases import models as testcases_models  # noqa: F401
 # Sprint 4: TestCase/TestCaseVersion/TestCaseCounter (testcases domain).
 # Imported after requirements_models since TestCase.test_design_id FKs to
 # requirements' test_designs table.
+from app.domains.environments import models as environments_models  # noqa: F401
+from app.domains.automation import models as automation_models  # noqa: F401
+# Sprint 5: Environment (environments domain), AutomationScript/ScriptVersion
+# (automation domain, FKs to test_cases) and Execution (executions domain,
+# FKs to test_cases + environments) - imported after testcases_models/
+# environments_models for the same FK-ordering reason as above.
+from app.domains.executions import models as executions_models  # noqa: F401
 
 # this is the Alembic Config object, which provides access to values within
 # the .ini file in use.
