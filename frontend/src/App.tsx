@@ -16,7 +16,7 @@ import TestCaseDetailPage from './pages/testcases/TestCaseDetailPage';
 import TestPlansPage from './pages/stubs/TestPlansPage';
 import AutomationListPage from './pages/automation/AutomationListPage';
 import ExecutionHistoryPage from './pages/testing/ExecutionHistoryPage';
-import SchedulesPage from './pages/stubs/SchedulesPage';
+import SchedulesPage from './pages/schedules/SchedulesPage';
 import ReportsPage from './pages/reports/ReportsPage';
 import NotFoundPage from './pages/NotFoundPage';
 

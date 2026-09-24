@@ -568,3 +568,36 @@ export interface RequirementCoverage {
   latest_status_breakdown: StatusBreakdown;
   pass_rate_pct: number | null;
 }
+
+// --- Scheduling (Sprint 7) ---
+
+/** Shape returned by GET/POST/PATCH /projects/{id}/schedules(/{scheduleId}). */
+export interface ScheduledJob {
+  id: string;
+  project_id: string;
+  test_case_id: string;
+  environment_id: string;
+  name: string;
+  cron_expression: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduledJobCreateInput {
+  name: string;
+  test_case_id: string;
+  environment_id: string;
+  cron_expression: string;
+  enabled?: boolean;
+}
+
+export interface ScheduledJobUpdateInput {
+  name?: string;
+  cron_expression?: string;
+  enabled?: boolean;
+  environment_id?: string;
+}

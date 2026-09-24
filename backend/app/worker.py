@@ -24,6 +24,18 @@ actual execution engine (writing the script to a temp file inside
 =json` as a real subprocess, parsing the result). Importing it lazily here
 (rather than at module scope) keeps this module import-cycle-free: nothing
 in `app.domains.executions.tasks` needs to import this module back.
+
+Sprint 7 (schedules domain) adds a second, periodic task -
+`run_due_scheduled_jobs` - registered on Celery Beat via `beat_schedule`
+below, running every 60 seconds. Its actual logic lives in
+`app.domains.schedules.tasks` (imported lazily, same reasoning as above);
+each tick it enqueues this same `run_automated_execution` task for every
+`ScheduledJob` that's currently due. Running a real Beat scheduler process
+alongside a worker is a normal deployment concern (`celery -A app.worker
+beat --loglevel=info`, in addition to the `worker` process from the
+docstring above) - pytest never runs Beat itself; see
+`app.domains.schedules.tasks.run_due_scheduled_jobs_sync()`'s own docstring
+for how tests invoke the periodic task's logic directly instead.
 """
 from celery import Celery
 
@@ -44,9 +56,23 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+celery_app.conf.beat_schedule = {
+    "run-due-scheduled-jobs": {
+        "task": "run_due_scheduled_jobs",
+        "schedule": 60.0,  # seconds
+    },
+}
+
 
 @celery_app.task(name="run_automated_execution")
 def run_automated_execution(execution_id: str) -> None:
     from app.domains.executions.tasks import run_automated_execution_sync
 
     run_automated_execution_sync(execution_id)
+
+
+@celery_app.task(name="run_due_scheduled_jobs")
+def run_due_scheduled_jobs() -> None:
+    from app.domains.schedules.tasks import run_due_scheduled_jobs_sync
+
+    run_due_scheduled_jobs_sync()

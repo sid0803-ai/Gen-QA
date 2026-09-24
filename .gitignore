@@ -41,3 +41,6 @@ pgdata/
 backend/.dev_pg_daemon.py
 backend/.verify_*
 frontend/.verify_*
+
+# Celery Beat's local scheduler state (dev-only, wherever `celery beat` is run from)
+celerybeat-schedule*

@@ -37,6 +37,7 @@ from app.domains.projects.models import ProjectRole
 from app.domains.requirements import repository as requirements_repository
 from app.domains.requirements.models import Requirement
 from app.domains.requirements.repository import RequirementNotFoundError  # noqa: F401 (re-exported)
+from app.domains.schedules.models import ScheduledJob
 from app.domains.testcases.models import ExecutionType, TestCase
 
 # Every non-transient Execution.status value - "pending"/"running" are the
@@ -158,6 +159,15 @@ async def get_dashboard(db: AsyncSession, project_id: uuid.UUID, user_id: uuid.U
 
     open_failures_count = breakdown["failed"] + breakdown["error"]
 
+    scheduled_jobs_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ScheduledJob)
+            .where(ScheduledJob.project_id == project_id)
+            .where(ScheduledJob.enabled.is_(True))
+        )
+    ).scalar_one()
+
     return {
         "requirements_count": requirements_count,
         "test_cases_count": test_cases_count,
@@ -168,7 +178,7 @@ async def get_dashboard(db: AsyncSession, project_id: uuid.UUID, user_id: uuid.U
         "latest_status_breakdown": breakdown,
         "pass_rate_pct": _pass_rate_pct(breakdown),
         "open_failures_count": open_failures_count,
-        "scheduled_jobs_count": 0,
+        "scheduled_jobs_count": scheduled_jobs_count,
     }
 
 
