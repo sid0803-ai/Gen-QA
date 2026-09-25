@@ -29,6 +29,15 @@ from app.domains.automation import models as automation_models  # noqa: F401
 # FKs to test_cases + environments) - imported after testcases_models/
 # environments_models for the same FK-ordering reason as above.
 from app.domains.executions import models as executions_models  # noqa: F401
+# Sprint 7: ScheduledJob (schedules domain). This import was missing from
+# this file until Sprint 8 noticed autogenerate wanting to drop
+# `scheduled_jobs` (it was never in `target_metadata`, so the table existed
+# in the database but not in Alembic's view of the models) - fixed here as
+# part of adding Sprint 8's own import, since leaving it out would corrupt
+# every future autogenerate run, not just this one.
+from app.domains.schedules import models as schedules_models  # noqa: F401
+# Sprint 8: SavedApiRequest (api_performer domain, FKs to environments).
+from app.domains.api_performer import models as api_performer_models  # noqa: F401
 
 # this is the Alembic Config object, which provides access to values within
 # the .ini file in use.

@@ -9,6 +9,7 @@ import {
   ClockCircleOutlined,
   BarChartOutlined,
   SettingOutlined,
+  ApiOutlined,
 } from '@ant-design/icons';
 
 export interface ProjectNavItem {
@@ -41,6 +42,7 @@ export const PROJECT_NAV_ITEMS: ProjectNavItem[] = [
   { key: 'automation', label: 'Automation', icon: <RobotOutlined />, path: 'automation' },
   { key: 'testing', label: 'Testing', icon: <PlayCircleOutlined />, path: 'testing' },
   { key: 'schedules', label: 'Schedules', icon: <ClockCircleOutlined />, path: 'schedules' },
+  { key: 'api-performer', label: 'API Performer', icon: <ApiOutlined />, path: 'api-performer' },
   { key: 'reports', label: 'Reports', icon: <BarChartOutlined />, path: 'reports' },
   { key: 'settings', label: 'Settings', icon: <SettingOutlined />, path: 'settings/members' },
 ];

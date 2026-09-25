@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.domains.api_performer.router import router as api_performer_router
 from app.domains.automation.router import router as automation_router
 from app.domains.environments.router import router as environments_router
 from app.domains.executions.router import router as executions_router
@@ -36,6 +37,7 @@ app.include_router(automation_router, prefix=API_V1_PREFIX)
 app.include_router(executions_router, prefix=API_V1_PREFIX)
 app.include_router(reporting_router, prefix=API_V1_PREFIX)
 app.include_router(schedules_router, prefix=API_V1_PREFIX)
+app.include_router(api_performer_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health", tags=["health"])

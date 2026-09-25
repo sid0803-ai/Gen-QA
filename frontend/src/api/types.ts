@@ -601,3 +601,55 @@ export interface ScheduledJobUpdateInput {
   enabled?: boolean;
   environment_id?: string;
 }
+
+// --- API Performer (Sprint 8) ---
+
+export type ApiRequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+
+/** Shape returned by GET/POST/PATCH /projects/{id}/api-requests(/{requestId}). */
+export interface SavedApiRequest {
+  id: string;
+  project_id: string;
+  name: string;
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  query_params: Record<string, string>;
+  body: string | null;
+  environment_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Body for POST (create, `name` required) and PATCH (update, all optional) of a saved request. */
+export interface SavedApiRequestInput {
+  name?: string;
+  method?: ApiRequestMethod;
+  url?: string;
+  headers?: Record<string, string>;
+  query_params?: Record<string, string>;
+  body?: string;
+  environment_id?: string;
+}
+
+/** Body for POST /api-requests/execute (ad-hoc) and POST /api-requests/{id}/execute (saved, override). */
+export interface ApiRequestExecuteInput {
+  method?: ApiRequestMethod;
+  url?: string;
+  headers?: Record<string, string>;
+  query_params?: Record<string, string>;
+  body?: string;
+  environment_id?: string;
+}
+
+/** Shape returned by both execute endpoints. `error` set means the outbound request itself
+ * failed (timeout/connection refused/invalid scheme) — a normal result for this tool, not a
+ * thrown API error. A real 4xx/5xx HTTP response has `error: null` and a populated status/body. */
+export interface ApiExecuteResult {
+  status_code: number | null;
+  headers: Record<string, string>;
+  body: string;
+  duration_ms: number;
+  error: string | null;
+}
