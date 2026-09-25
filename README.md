@@ -25,7 +25,11 @@ script gets run, etc.).
 | 4 | Test Design + Test Case Repository | ✅ Done |
 | 5 | Environments + Automation Scripts + real Execution engine (Celery/Redis/Playwright) | ✅ Done |
 | 6 | Reporting — dashboard, trend/breakdown reports, requirement coverage | ✅ Done |
-| 7 | Scheduling — recurring automated runs (Celery Beat) | 🚧 In progress |
+| 7 | Scheduling — recurring automated runs (Celery Beat) | ✅ Done |
+
+**New here?** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) walks through the
+whole product end to end — what each screen does and how a requirement flows
+all the way to a pass/fail result on a dashboard.
 
 Detailed, sprint-by-sprint API contracts, domain-placement decisions, and
 known scope cuts live in [`backend/README.md`](backend/README.md) and
@@ -153,6 +157,9 @@ data) on every read/write path into user B's project.
 
 ## Where to look next
 
+- [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) — end-to-end product walkthrough:
+  what Gen-QA does, roles, and the full requirement → automation → report
+  workflow, screen by screen.
 - [`backend/README.md`](backend/README.md) — full per-domain breakdown, API
   contract, migration/verification notes, known scope cuts and deviations,
   sprint-by-sprint.
