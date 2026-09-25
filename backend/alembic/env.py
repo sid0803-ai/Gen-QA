@@ -40,6 +40,10 @@ from app.domains.schedules import models as schedules_models  # noqa: F401
 # Sprint 9: same module also now defines ApiCollection/ApiFolder
 # (Collection -> Folder -> Request hierarchy) - no separate import needed.
 from app.domains.api_performer import models as api_performer_models  # noqa: F401
+# Sprint 10: PerformanceTest/PerformanceTestRun (performance domain, FKs to
+# saved_api_requests) - imported after api_performer_models for the same
+# FK-ordering reason as above.
+from app.domains.performance import models as performance_models  # noqa: F401
 
 # this is the Alembic Config object, which provides access to values within
 # the .ini file in use.

@@ -18,6 +18,7 @@ import AutomationListPage from './pages/automation/AutomationListPage';
 import ExecutionHistoryPage from './pages/testing/ExecutionHistoryPage';
 import SchedulesPage from './pages/schedules/SchedulesPage';
 import ApiPerformerPage from './pages/apiperformer/ApiPerformerPage';
+import PerformancePage from './pages/performance/PerformancePage';
 import ReportsPage from './pages/reports/ReportsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/projects/:projectId/testing" element={<ExecutionHistoryPage />} />
             <Route path="/projects/:projectId/schedules" element={<SchedulesPage />} />
             <Route path="/projects/:projectId/api-performer" element={<ApiPerformerPage />} />
+            <Route path="/projects/:projectId/performance" element={<PerformancePage />} />
             <Route path="/projects/:projectId/reports" element={<ReportsPage />} />
             <Route path="/projects/:projectId/settings" element={<ProjectSettingsLayout />}>
               <Route index element={<Navigate to="members" replace />} />

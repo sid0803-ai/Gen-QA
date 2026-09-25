@@ -76,3 +76,10 @@ def run_due_scheduled_jobs() -> None:
     from app.domains.schedules.tasks import run_due_scheduled_jobs_sync
 
     run_due_scheduled_jobs_sync()
+
+
+@celery_app.task(name="run_performance_test")
+def run_performance_test(run_id: str) -> None:
+    from app.domains.performance.tasks import run_performance_test_sync
+
+    run_performance_test_sync(run_id)

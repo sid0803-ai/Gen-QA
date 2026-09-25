@@ -732,3 +732,71 @@ export interface ApiExecuteResult {
   duration_ms: number;
   error: string | null;
 }
+
+// --- Performance Testing / "Performer" (Sprint 10) ---
+
+/** Shape returned by GET/POST/PATCH /projects/{id}/performance-tests(/{testId}). */
+export interface PerformanceTest {
+  id: string;
+  project_id: string;
+  saved_request_id: string;
+  name: string;
+  vus: number;
+  duration_seconds: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Body for POST /performance-tests. vus: 1-500, duration_seconds: 1-3600. */
+export interface PerformanceTestCreateInput {
+  saved_request_id: string;
+  name: string;
+  vus: number;
+  duration_seconds: number;
+}
+
+/** Body for PATCH /performance-tests/{id} — standard "omitted key means unchanged" convention. */
+export interface PerformanceTestUpdateInput {
+  saved_request_id?: string;
+  name?: string;
+  vus?: number;
+  duration_seconds?: number;
+}
+
+export type PerformanceTestRunStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+/**
+ * Shape returned by GET /performance-tests/{id}/runs/{runId} — full detail,
+ * including `raw_summary` (the raw k6 summary JSON blob).
+ */
+export interface PerformanceTestRun {
+  id: string;
+  performance_test_id: string;
+  status: PerformanceTestRunStatus;
+  vus: number;
+  duration_seconds: number;
+  started_at: string | null;
+  completed_at: string | null;
+  request_count: number | null;
+  failed_count: number | null;
+  error_rate: number | null;
+  avg_duration_ms: number | null;
+  p95_duration_ms: number | null;
+  min_duration_ms: number | null;
+  max_duration_ms: number | null;
+  requests_per_second: number | null;
+  raw_summary: Record<string, unknown> | null;
+  error_message: string | null;
+  created_by: string;
+}
+
+/**
+ * Shape returned by GET /performance-tests/{id}/runs (list form) and by
+ * POST /performance-tests/{id}/runs (trigger). The contract says the list
+ * endpoint "may omit" `raw_summary`, so it's optional here rather than on
+ * `PerformanceTestRun` itself — a single-run GET still gets the full type.
+ */
+export type PerformanceTestRunSummary = Omit<PerformanceTestRun, 'raw_summary'> & {
+  raw_summary?: Record<string, unknown> | null;
+};

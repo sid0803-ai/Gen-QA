@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
+    # Performance testing (Sprint 10): path to the k6 binary. Defaults to
+    # assuming k6 is on PATH; override via K6_BINARY_PATH to point at a
+    # portable binary - same posture as this codebase's existing portable-
+    # binary handling for Redis/Playwright's Chrome channel, since this dev
+    # environment has no Docker/admin rights to install k6 system-wide.
+    k6_binary_path: str = "k6"
+
 
 @lru_cache
 def get_settings() -> Settings:
