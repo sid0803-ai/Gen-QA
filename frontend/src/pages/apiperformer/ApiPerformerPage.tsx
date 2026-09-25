@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   App as AntApp,
   Alert,
+  Breadcrumb,
   Button,
   Card,
   Col,
@@ -10,6 +11,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Radio,
   Row,
   Select,
   Space,
@@ -20,15 +22,21 @@ import {
 } from 'antd';
 import type { TreeDataNode } from 'antd';
 import {
+  ApiOutlined,
   DeleteOutlined,
   EditOutlined,
+  EyeOutlined,
   FileAddOutlined,
   FolderAddOutlined,
+  FolderOutlined,
+  FormatPainterOutlined,
+  GlobalOutlined,
   PlusOutlined,
   SendOutlined,
 } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import { KeyValueListEditor } from '../../components/KeyValueListEditor';
+import { JsonOrPlainView } from '../../components/JsonView';
 import { useEnvironments } from '../../hooks/useEnvironments';
 import {
   useCreateSavedRequest,
@@ -57,6 +65,9 @@ import type {
 
 const { Title, Text } = Typography;
 
+/** Postman-style body format sub-option. `raw` and `json` both send the body text as-is (see `handleSend`) — `json` just gets the "Beautify" affordance and highlighted-as-JSON treatment leaned into; `graphql` is a simplified single-textarea mode (no separate query/variables split). */
+type BodyMode = 'raw' | 'json' | 'graphql';
+
 interface BuilderState {
   method: ApiRequestMethod;
   url: string;
@@ -64,6 +75,7 @@ interface BuilderState {
   headers: Record<string, string>;
   queryParams: Record<string, string>;
   body: string;
+  bodyMode: BodyMode;
 }
 
 const BLANK_BUILDER: BuilderState = {
@@ -73,6 +85,7 @@ const BLANK_BUILDER: BuilderState = {
   headers: {},
   queryParams: {},
   body: '',
+  bodyMode: 'json',
 };
 
 /** Where a "+" on a collection/folder node in the tree targets a newly-built request for saving. */
@@ -95,15 +108,6 @@ function statusTagColor(statusCode: number | null): string {
   if (statusCode >= 300 && statusCode < 400) return 'blue';
   if (statusCode >= 400 && statusCode < 500) return 'warning';
   return 'error';
-}
-
-function formatBody(body: string): string {
-  if (!body) return '';
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    return body;
-  }
 }
 
 /** A tree row: main content on the left, hover-revealed action icons on the right (see the `.api-tree-node` CSS below). */
@@ -245,6 +249,7 @@ export default function ApiPerformerPage() {
         headers: req.headers,
         queryParams: req.query_params,
         body: req.body ?? '',
+        bodyMode: 'json',
       });
       setResponse(null);
     } catch (err) {
@@ -293,6 +298,33 @@ export default function ApiPerformerPage() {
       if (err instanceof ApiError) message.error(err.detail);
     }
   };
+
+  /** Pretty-prints `builder.body` in place if it's valid JSON; otherwise leaves it untouched and tells the user why (never throws on malformed input). */
+  const handleBeautifyBody = () => {
+    if (!builder.body.trim()) return;
+    try {
+      const pretty = JSON.stringify(JSON.parse(builder.body), null, 2);
+      setBuilder((b) => ({ ...b, body: pretty }));
+    } catch {
+      message.info('Body is not valid JSON — nothing to beautify.');
+    }
+  };
+
+  // Breadcrumb path (Collection > Folder > Request) for the currently-loaded saved request.
+  // Unsaved / ad-hoc requests (and ones being built into an as-yet-unpicked create target)
+  // render no breadcrumb — see the "Unsaved Request" fallback below.
+  const requestPath = useMemo(() => {
+    if (!loadedRequest) return null;
+    const coll = collections.find((c) => c.id === loadedRequest.collection_id);
+    const folder = loadedRequest.folder_id
+      ? coll?.folders.find((f) => f.id === loadedRequest.folder_id)
+      : undefined;
+    return {
+      collectionName: coll?.name ?? 'Collection',
+      folderName: folder?.name,
+      requestName: loadedRequest.name,
+    };
+  }, [loadedRequest, collections]);
 
   const buildSaveInput = () => ({
     method: builder.method,
@@ -484,10 +516,18 @@ export default function ApiPerformerPage() {
             </Popconfirm>
           }
         >
-          <Tag color={methodColor(req.method)} style={{ marginRight: 0 }}>
+          <Text
+            style={{
+              color: methodColor(req.method),
+              fontWeight: 700,
+              fontSize: 11,
+              minWidth: 42,
+              display: 'inline-block',
+            }}
+          >
             {req.method}
-          </Tag>
-          <Text ellipsis style={{ maxWidth: 130 }}>
+          </Text>
+          <Text ellipsis style={{ maxWidth: 120 }}>
             {req.name}
           </Text>
         </TreeNodeRow>
@@ -534,7 +574,8 @@ export default function ApiPerformerPage() {
             </>
           }
         >
-          <Text strong ellipsis style={{ maxWidth: 140 }}>
+          <FolderOutlined style={{ color: '#d48806', fontSize: 13 }} />
+          <Text strong ellipsis style={{ maxWidth: 122 }}>
             {folder.name}
           </Text>
         </TreeNodeRow>
@@ -590,7 +631,8 @@ export default function ApiPerformerPage() {
             </>
           }
         >
-          <Text strong ellipsis style={{ maxWidth: 130 }}>
+          <ApiOutlined style={{ color: '#1677ff', fontSize: 13 }} />
+          <Text strong ellipsis style={{ maxWidth: 112 }}>
             {coll.name}
           </Text>
         </TreeNodeRow>
@@ -599,6 +641,11 @@ export default function ApiPerformerPage() {
   })();
 
   const headerEntries = Object.entries(response?.headers ?? {});
+  // "Preview" renders HTML responses in a sandboxed iframe; anything else (JSON, plain text, etc.)
+  // falls back to the same pretty-printed/highlighted view as the Body tab.
+  const responseContentType =
+    headerEntries.find(([k]) => k.toLowerCase() === 'content-type')?.[1] ?? '';
+  const isHtmlResponse = /text\/html/i.test(responseContentType);
 
   return (
     <div>
@@ -655,6 +702,38 @@ export default function ApiPerformerPage() {
 
         <Col span={17}>
           <Card title="Request Builder" size="small" style={{ marginBottom: 16 }}>
+            {/* Postman-style breadcrumb: protocol icon + Collection > Folder > Request path of the
+                currently-loaded saved request. Unsaved/ad-hoc requests show a plain "Unsaved Request"
+                label instead of a path, since there's nowhere to point the breadcrumb yet. */}
+            <div
+              data-testid="request-breadcrumb"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}
+            >
+              <GlobalOutlined style={{ color: '#8c8c8c' }} />
+              {requestPath ? (
+                <Breadcrumb
+                  items={[
+                    { title: requestPath.collectionName },
+                    ...(requestPath.folderName ? [{ title: requestPath.folderName }] : []),
+                    {
+                      title: (
+                        <Space size={6}>
+                          <Text style={{ color: methodColor(builder.method), fontWeight: 700, fontSize: 12 }}>
+                            {builder.method}
+                          </Text>
+                          <Text strong>{requestPath.requestName}</Text>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              ) : (
+                <Text type="secondary" italic>
+                  Unsaved Request
+                </Text>
+              )}
+            </div>
+
             <Space.Compact style={{ width: '100%', marginBottom: 4 }}>
               <Select
                 value={builder.method}
@@ -676,6 +755,16 @@ export default function ApiPerformerPage() {
                 onChange={(e) => setBuilder((b) => ({ ...b, url: e.target.value }))}
                 data-testid="request-url-input"
               />
+              <span data-testid="send-request-button">
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  loading={executeAdHoc.isPending}
+                  onClick={handleSend}
+                >
+                  Send
+                </Button>
+              </span>
             </Space.Compact>
             <Text type="secondary" style={{ fontSize: 12 }}>
               Use {'{{base_url}}'} or {'{{VARIABLE_NAME}}'} to reference the selected environment.
@@ -723,30 +812,56 @@ export default function ApiPerformerPage() {
                   key: 'body',
                   label: 'Body',
                   children: (
-                    <Input.TextArea
-                      value={builder.body}
-                      onChange={(e) => setBuilder((b) => ({ ...b, body: e.target.value }))}
-                      autoSize={{ minRows: 6, maxRows: 16 }}
-                      placeholder="Request body (raw)"
-                      style={{ fontFamily: 'monospace', fontSize: 12 }}
-                      data-testid="request-body-textarea"
-                    />
+                    <div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Radio.Group
+                          size="small"
+                          value={builder.bodyMode}
+                          onChange={(e) => setBuilder((b) => ({ ...b, bodyMode: e.target.value }))}
+                          optionType="button"
+                          buttonStyle="solid"
+                          data-testid="request-body-mode"
+                          options={[
+                            { label: 'raw', value: 'raw' },
+                            { label: 'JSON', value: 'json' },
+                            { label: 'GraphQL', value: 'graphql' },
+                          ]}
+                        />
+                        <Button
+                          size="small"
+                          icon={<FormatPainterOutlined />}
+                          onClick={handleBeautifyBody}
+                          data-testid="beautify-body-button"
+                        >
+                          Beautify
+                        </Button>
+                      </div>
+                      <Input.TextArea
+                        value={builder.body}
+                        onChange={(e) => setBuilder((b) => ({ ...b, body: e.target.value }))}
+                        autoSize={{ minRows: 6, maxRows: 16 }}
+                        placeholder={
+                          builder.bodyMode === 'graphql'
+                            ? 'query { field { subField } }'
+                            : 'Request body (raw)'
+                        }
+                        style={{ fontFamily: 'monospace', fontSize: 12 }}
+                        data-testid="request-body-textarea"
+                      />
+                    </div>
                   ),
                 },
               ]}
             />
 
             <Space style={{ marginTop: 12 }}>
-              <span data-testid="send-request-button">
-                <Button
-                  type="primary"
-                  icon={<SendOutlined />}
-                  loading={executeAdHoc.isPending}
-                  onClick={handleSend}
-                >
-                  Send
-                </Button>
-              </span>
               {loadedRequest ? (
                 <span data-testid="save-request-button">
                   <Button loading={updateSavedRequest.isPending} onClick={handleSaveInPlace}>
@@ -807,34 +922,60 @@ export default function ApiPerformerPage() {
                             key: 'headers',
                             label: 'Response Headers',
                             children: (
-                              <Space direction="vertical" size={2}>
-                                {headerEntries.map(([k, v]) => (
-                                  <Text key={k} code style={{ fontSize: 12 }}>
-                                    {k}: {v}
-                                  </Text>
-                                ))}
-                              </Space>
+                              <div data-testid="response-headers">
+                                <JsonOrPlainView
+                                  text={JSON.stringify(Object.fromEntries(headerEntries))}
+                                />
+                              </div>
                             ),
                           },
                         ]}
                       />
                     )}
-                    <pre
-                      data-testid="response-body"
-                      style={{
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                        background: '#f5f5f5',
-                        padding: 12,
-                        borderRadius: 4,
-                        maxHeight: 400,
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {formatBody(response.body)}
-                    </pre>
+                    <Tabs
+                      size="small"
+                      items={[
+                        {
+                          key: 'body',
+                          label: 'Body',
+                          children: (
+                            <div data-testid="response-body">
+                              <JsonOrPlainView text={response.body} emptyText="No response body" />
+                            </div>
+                          ),
+                        },
+                        {
+                          key: 'preview',
+                          label: (
+                            <span>
+                              <EyeOutlined /> Preview
+                            </span>
+                          ),
+                          children: isHtmlResponse ? (
+                            <iframe
+                              title="Response preview"
+                              // Sandboxed with no allowed capabilities (no scripts, no same-origin,
+                              // no forms) — a response body is untrusted content, this is a preview
+                              // pane, not a script execution surface.
+                              sandbox=""
+                              srcDoc={response.body}
+                              data-testid="response-preview-iframe"
+                              style={{
+                                width: '100%',
+                                height: 400,
+                                border: '1px solid #f0f0f0',
+                                borderRadius: 4,
+                                background: '#fff',
+                              }}
+                            />
+                          ) : (
+                            <div data-testid="response-preview-json">
+                              <JsonOrPlainView text={response.body} emptyText="No response body" />
+                            </div>
+                          ),
+                        },
+                      ]}
+                    />
                   </>
                 )}
               </>
