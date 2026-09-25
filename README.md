@@ -27,6 +27,8 @@ script gets run, etc.).
 | 6 | Reporting — dashboard, trend/breakdown reports, requirement coverage | ✅ Done |
 | 7 | Scheduling — recurring automated runs (Celery Beat) | ✅ Done |
 | 8 | API Performer — built-in, Postman-lite ad-hoc HTTP request tool | ✅ Done |
+| 9 | API Performer redesign — Postman-style UI, Collections → Folders → Requests | ✅ Done |
+| 10 | Performance Testing ("Performer") — k6-backed load testing on saved API Performer requests | ✅ Done |
 
 **New here?** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) walks through the
 whole product end to end — what each screen does and how a requirement flows
@@ -127,6 +129,12 @@ cd automation_runner && npm install
 
 # 5. Real worker, for automated executions to actually run
 cd backend && celery -A app.worker worker --loglevel=info --pool=solo   # --pool=solo required on Windows
+
+# 5b. (Optional) k6, for Performance Testing runs to actually execute — a
+#     single portable binary (https://k6.io), same posture as Redis/Chrome
+#     above. Without it, performance test runs fail gracefully with a clear
+#     "k6 binary not found" error instead of crashing. Point
+#     K6_BINARY_PATH in backend/.env at the binary if it's not on PATH.
 
 # 6. Frontend
 cd frontend

@@ -261,15 +261,24 @@ will resume firing automatically once the script is approved again.
 
 Sometimes you just want to hit an endpoint and look at what comes back,
 without going through a test case at all. **API Performer** is a built-in,
-Postman-lite tool for exactly that — no external app, no browser CORS
+Postman-style tool for exactly that — no external app, no browser CORS
 problems (the request is made by the Gen-QA backend server itself, not your
 browser).
 
-Build a request on the right: pick a **method**, type a **URL**, optionally
-pick an **environment**, and fill in **headers**, **query params**, and a
-**body**. Click **Send** — nothing needs to be saved first. The response
-panel below shows the real status code, timing, response headers, and body
-(pretty-printed automatically if it's JSON).
+Requests are organized like Postman: **Collections → Folders → Requests**,
+shown as a tree on the left. Create a collection, optionally add folders
+inside it, and save requests into either a collection directly or one of its
+folders. Deleting a folder un-files its requests back to the collection
+rather than deleting them; deleting a collection deletes everything in it.
+
+Build a request in the middle panel: pick a **method** (each method has its
+own color, matching Postman's convention), type a **URL**, optionally pick
+an **environment**, and fill in **headers**, **query params**, and a
+**body** (raw / JSON / GraphQL, with a **Beautify** button to pretty-print
+JSON). Click **Send** — nothing needs to be saved first. The response panel
+below shows the real status code, timing, response headers, and body, both
+JSON-syntax-highlighted, with a **Preview** tab (renders HTML responses in a
+sandboxed frame; anything else falls back to the same highlighted view).
 
 If you picked an environment, your URL/headers/query params/body can
 reference it with placeholders:
@@ -282,11 +291,11 @@ reference it with placeholders:
   never treated as an error, so a request can reference a variable you
   haven't added yet without breaking.
 
-Click **Save** to keep a request for reuse — it appears in the list on the
-left, click any row to load it back into the builder. If you've loaded an
-existing saved request and change something, **Save** updates it in place;
-**Save as New** creates a separate copy instead, so you can't accidentally
-overwrite a request you meant to keep.
+Click **Save** to keep a request for reuse — pick which collection (and
+optionally folder) it belongs in. Loading an existing saved request and
+changing something lets you **Save** in place or **Save as New** to create a
+separate copy instead, so you can't accidentally overwrite a request you
+meant to keep.
 
 A few things worth knowing:
 
@@ -301,10 +310,50 @@ A few things worth knowing:
   error status code" (a real 4xx/5xx is a perfectly normal, successful use
   of the tool).
 - Only `http`/`https` URLs are accepted.
+- Only one level of folder nesting is supported (no folders inside folders).
 
 ---
 
-## 13. Step 8 — Dashboard & Reports
+## 13. Performance Testing — k6-backed load testing
+
+**Performance Testing** (labeled "Performance" in the sidebar) lets you take
+a request you've already saved in API Performer and run it as a real load
+test using [k6](https://k6.io), without leaving Gen-QA.
+
+Create a **Performance Test**: give it a name, pick a saved request (from
+any collection/folder), and set **Virtual Users** (how many concurrent
+simulated users, 1–500) and **Duration** (how long the test runs, in
+seconds, 1–3,600). Click **Run** to start it — the run begins in `queued`,
+moves to `running` while k6 is actually hitting the target, and finishes as
+`completed` or `failed`. The UI polls automatically and updates live; you
+don't need to refresh.
+
+Each completed run shows:
+
+- **Requests** and **Failed** counts, and **Error rate** as a percentage
+- **Avg** and **P95 latency**, plus min/max
+- **Requests/sec**
+- The full raw k6 summary, if you want to dig deeper
+
+Every run's configuration (VUs, duration) is captured on the run itself, so
+editing a test's settings later never changes what a past run says it used.
+
+A few things worth knowing:
+
+- **One saved request per performance test.** You can't load-test an entire
+  collection or a multi-step flow in one run — point a test at the one
+  endpoint you want to load-test. `{{base_url}}`/`{{VARIABLE_NAME}}`
+  substitution from the saved request's environment still applies.
+- **k6 must be installed** on the machine running the backend (a single
+  portable binary — no separate service or account needed). If it isn't
+  found, a run fails clearly with an explanatory error message rather than
+  hanging or crashing.
+- There's no live, second-by-second progress feed — results appear once the
+  whole run finishes.
+
+---
+
+## 14. Step 8 — Dashboard & Reports
 
 **Dashboard** (a project's home page) gives you the state of the project at
 a glance: requirement and test case counts, automation coverage (% of test
@@ -334,7 +383,7 @@ in progress, doesn't affect the pass rate either way.
 
 ---
 
-## 14. Status glossary
+## 15. Status glossary
 
 | Status | Meaning |
 | --- | --- |
@@ -347,7 +396,7 @@ in progress, doesn't affect the pass rate either way.
 
 ---
 
-## 15. A note on the AI provider
+## 16. A note on the AI provider
 
 Every "AI" step today runs against a built-in **mock provider** — a
 keyword-heuristic generator, not a call to an external LLM. This means:
@@ -363,7 +412,7 @@ keyword-heuristic generator, not a call to an external LLM. This means:
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 - **"Test case has no approved automation script" when creating a
   schedule** — generate and approve a script for that test case first
