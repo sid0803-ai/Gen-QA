@@ -26,6 +26,7 @@ script gets run, etc.).
 | 5 | Environments + Automation Scripts + real Execution engine (Celery/Redis/Playwright) | ✅ Done |
 | 6 | Reporting — dashboard, trend/breakdown reports, requirement coverage | ✅ Done |
 | 7 | Scheduling — recurring automated runs (Celery Beat) | ✅ Done |
+| 8 | API Performer — built-in, Postman-lite ad-hoc HTTP request tool | ✅ Done |
 
 **New here?** [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) walks through the
 whole product end to end — what each screen does and how a requirement flows

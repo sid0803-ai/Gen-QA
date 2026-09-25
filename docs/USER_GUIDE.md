@@ -257,7 +257,54 @@ will resume firing automatically once the script is approved again.
 
 ---
 
-## 12. Step 8 — Dashboard & Reports
+## 12. API Performer — ad-hoc API testing
+
+Sometimes you just want to hit an endpoint and look at what comes back,
+without going through a test case at all. **API Performer** is a built-in,
+Postman-lite tool for exactly that — no external app, no browser CORS
+problems (the request is made by the Gen-QA backend server itself, not your
+browser).
+
+Build a request on the right: pick a **method**, type a **URL**, optionally
+pick an **environment**, and fill in **headers**, **query params**, and a
+**body**. Click **Send** — nothing needs to be saved first. The response
+panel below shows the real status code, timing, response headers, and body
+(pretty-printed automatically if it's JSON).
+
+If you picked an environment, your URL/headers/query params/body can
+reference it with placeholders:
+
+- `{{base_url}}` — replaced with that environment's base URL (URL field
+  only).
+- `{{VARIABLE_NAME}}` — replaced with that value from the environment's
+  variables (anywhere: URL, headers, query params, body). A placeholder for
+  a variable the environment doesn't have is left exactly as typed — it's
+  never treated as an error, so a request can reference a variable you
+  haven't added yet without breaking.
+
+Click **Save** to keep a request for reuse — it appears in the list on the
+left, click any row to load it back into the builder. If you've loaded an
+existing saved request and change something, **Save** updates it in place;
+**Save as New** creates a separate copy instead, so you can't accidentally
+overwrite a request you meant to keep.
+
+A few things worth knowing:
+
+- **Nothing about a request's *result* is saved** — API Performer is a
+  "run it and look right now" tool, not a log. If you need a durable record
+  of an API call, copy the response out yourself. (This is different from
+  Executions in §10, which *does* keep a full history — API Performer is
+  intentionally lighter-weight.)
+- **A failed request (timeout, unreachable host, DNS failure) shows up as a
+  normal result** with an error message, not a crash — Gen-QA distinguishes
+  "the tool couldn't complete the request" from "the target answered with an
+  error status code" (a real 4xx/5xx is a perfectly normal, successful use
+  of the tool).
+- Only `http`/`https` URLs are accepted.
+
+---
+
+## 13. Step 8 — Dashboard & Reports
 
 **Dashboard** (a project's home page) gives you the state of the project at
 a glance: requirement and test case counts, automation coverage (% of test
@@ -287,7 +334,7 @@ in progress, doesn't affect the pass rate either way.
 
 ---
 
-## 13. Status glossary
+## 14. Status glossary
 
 | Status | Meaning |
 | --- | --- |
@@ -300,7 +347,7 @@ in progress, doesn't affect the pass rate either way.
 
 ---
 
-## 14. A note on the AI provider
+## 15. A note on the AI provider
 
 Every "AI" step today runs against a built-in **mock provider** — a
 keyword-heuristic generator, not a call to an external LLM. This means:
@@ -316,7 +363,7 @@ keyword-heuristic generator, not a call to an external LLM. This means:
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 - **"Test case has no approved automation script" when creating a
   schedule** — generate and approve a script for that test case first
