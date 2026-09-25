@@ -1,10 +1,12 @@
-"""Routes: /api/v1/projects/{project_id}/api-requests/* (api_performer
-domain, "API Performer" - a built-in, Postman-lite ad-hoc HTTP request tool).
+"""Routes: /api/v1/projects/{project_id}/api-requests/*,
+/api/v1/projects/{project_id}/api-collections/* (api_performer domain,
+"API Performer" - a built-in, Postman-lite ad-hoc HTTP request tool).
 
 Project-scoped: `viewer` reads, `member` creates/edits/executes, `admin`
 deletes - same role convention as every other domain (`environments` in
 particular). See `app.domains.api_performer.models`'s module docstring for
-this domain's deliberate scope cuts (no execution history, SSRF).
+this domain's deliberate scope cuts (no execution history, SSRF, single-
+level folder nesting).
 """
 import uuid
 
@@ -21,6 +23,197 @@ from app.domains.projects import repository as project_repository
 from app.domains.projects.models import ProjectMember, ProjectRole
 
 router = APIRouter(prefix="/projects", tags=["api-performer"])
+
+
+# --- ApiCollection ---------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/api-collections",
+    response_model=schemas.ApiCollectionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_collection(
+    project_id: uuid.UUID,
+    payload: schemas.ApiCollectionCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.ApiCollectionRead:
+    try:
+        collection = await repository.create_collection(
+            db, project_id, current_user.id, name=payload.name
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
+    return schemas.ApiCollectionRead.model_validate(collection)
+
+
+@router.get("/{project_id}/api-collections", response_model=list[schemas.ApiCollectionRead])
+async def list_collections(
+    project_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    _membership: ProjectMember = Depends(require_project_role(ProjectRole.viewer)),
+    db: AsyncSession = Depends(get_db),
+) -> list[schemas.ApiCollectionRead]:
+    try:
+        collections = await repository.list_collections(db, project_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    return [schemas.ApiCollectionRead.model_validate(c) for c in collections]
+
+
+@router.get("/{project_id}/api-collections/tree", response_model=list[schemas.TreeCollectionNode])
+async def get_collection_tree(
+    project_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    _membership: ProjectMember = Depends(require_project_role(ProjectRole.viewer)),
+    db: AsyncSession = Depends(get_db),
+) -> list[schemas.TreeCollectionNode]:
+    """One call for the frontend's sidebar instead of N+1 - see
+    `schemas.TreeCollectionNode`'s docstring for the exact nesting/uniqueness
+    guarantee (a request appears in exactly one place)."""
+    try:
+        collections = await repository.get_tree(db, project_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    return [schemas.TreeCollectionNode.model_validate(c) for c in collections]
+
+
+@router.patch("/{project_id}/api-collections/{collection_id}", response_model=schemas.ApiCollectionRead)
+async def update_collection(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    payload: schemas.ApiCollectionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.ApiCollectionRead:
+    try:
+        collection = await repository.update_collection(
+            db, project_id, collection_id, current_user.id, name=payload.name
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    return schemas.ApiCollectionRead.model_validate(collection)
+
+
+@router.delete("/{project_id}/api-collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_collection(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        await repository.delete_collection(db, project_id, collection_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Admin role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+
+
+# --- ApiFolder ---------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/api-collections/{collection_id}/folders",
+    response_model=schemas.ApiFolderRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_folder(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    payload: schemas.ApiFolderCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.ApiFolderRead:
+    try:
+        folder = await repository.create_folder(
+            db, project_id, collection_id, current_user.id, name=payload.name
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    return schemas.ApiFolderRead.model_validate(folder)
+
+
+@router.get(
+    "/{project_id}/api-collections/{collection_id}/folders", response_model=list[schemas.ApiFolderRead]
+)
+async def list_folders(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    _membership: ProjectMember = Depends(require_project_role(ProjectRole.viewer)),
+    db: AsyncSession = Depends(get_db),
+) -> list[schemas.ApiFolderRead]:
+    try:
+        folders = await repository.list_folders(db, project_id, collection_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    return [schemas.ApiFolderRead.model_validate(f) for f in folders]
+
+
+@router.patch(
+    "/{project_id}/api-collections/{collection_id}/folders/{folder_id}",
+    response_model=schemas.ApiFolderRead,
+)
+async def update_folder(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    folder_id: uuid.UUID,
+    payload: schemas.ApiFolderUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> schemas.ApiFolderRead:
+    try:
+        folder = await repository.update_folder(
+            db, project_id, collection_id, folder_id, current_user.id, name=payload.name
+        )
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    except repository.ApiFolderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Folder not found.") from exc
+    return schemas.ApiFolderRead.model_validate(folder)
+
+
+@router.delete(
+    "/{project_id}/api-collections/{collection_id}/folders/{folder_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_folder(
+    project_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    folder_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        await repository.delete_folder(db, project_id, collection_id, folder_id, current_user.id)
+    except project_repository.NotAMemberError as exc:
+        raise HTTPException(status_code=404, detail="Project not found.") from exc
+    except project_repository.InsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail="Admin role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    except repository.ApiFolderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Folder not found.") from exc
 
 
 async def _run_execute(
@@ -77,11 +270,21 @@ async def create_saved_request(
             query_params=payload.query_params,
             body=payload.body,
             environment_id=payload.environment_id,
+            collection_id=payload.collection_id,
+            folder_id=payload.folder_id,
         )
     except project_repository.NotAMemberError as exc:
         raise HTTPException(status_code=404, detail="Project not found.") from exc
     except project_repository.InsufficientRoleError as exc:
         raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
+    except repository.ApiCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Collection not found.") from exc
+    except repository.ApiFolderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Folder not found.") from exc
+    except repository.FolderNotInCollectionError as exc:
+        raise HTTPException(
+            status_code=400, detail="Folder does not belong to the given collection."
+        ) from exc
     return schemas.SavedApiRequestRead.model_validate(saved_request)
 
 
@@ -124,6 +327,10 @@ async def update_saved_request(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> schemas.SavedApiRequestRead:
+    # `folder_id` is the one field on this PATCH that distinguishes "key
+    # omitted" from "key present as null" - see schemas.SavedApiRequestUpdate's
+    # docstring. Every other field keeps the ordinary blanket convention.
+    folder_id_set = "folder_id" in payload.model_fields_set
     try:
         saved_request = await repository.update_saved_request(
             db,
@@ -137,6 +344,8 @@ async def update_saved_request(
             query_params=payload.query_params,
             body=payload.body,
             environment_id=payload.environment_id,
+            folder_id=payload.folder_id,
+            folder_id_set=folder_id_set,
         )
     except project_repository.NotAMemberError as exc:
         raise HTTPException(status_code=404, detail="Project not found.") from exc
@@ -144,6 +353,12 @@ async def update_saved_request(
         raise HTTPException(status_code=403, detail="Member role required on this project.") from exc
     except repository.SavedApiRequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Saved API request not found.") from exc
+    except repository.ApiFolderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Folder not found.") from exc
+    except repository.FolderNotInCollectionError as exc:
+        raise HTTPException(
+            status_code=400, detail="Folder does not belong to the given collection."
+        ) from exc
     return schemas.SavedApiRequestRead.model_validate(saved_request)
 
 

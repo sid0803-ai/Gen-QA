@@ -36,16 +36,37 @@ unencrypted-`variables` note):
    itself unencrypted plain JSONB (see `environments/models.py`'s own
    docstring) - any secret stored there is handled with the same posture
    this sprint inherits, not a new gap introduced here.
+
+SPRINT 9 - Collection/Folder hierarchy
+=======================================
+Sprint 9 restructures the flat list of `SavedApiRequest` rows into a
+Postman-style **Collection -> Folder (optional) -> Request** hierarchy:
+
+- `ApiCollection` is the top-level, project-scoped container. Every
+  `SavedApiRequest` now belongs to exactly one `ApiCollection`
+  (`collection_id`, CASCADE - deleting a collection is a real, user-facing
+  destructive action that removes its folders and requests, same posture as
+  deleting a project cascading everything in it).
+- `ApiFolder` is a **single level of nesting only** - a folder belongs to
+  exactly one collection, and there is no folder-within-folder nesting.
+  This is a deliberate scope cut: Postman-style unlimited nesting would
+  need a recursive tree query/schema for comparatively little value for a
+  QA tool's request library; one level (collection -> folder -> request) is
+  enough to group related requests without that complexity. Deleting a
+  folder does **not** delete its requests - `SavedApiRequest.folder_id` is
+  ON DELETE SET NULL, so its requests simply move back to the collection's
+  top level (a request with `folder_id = null` sits directly under its
+  collection, not inside any folder).
 """
 import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, String, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, String, Text, and_, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 from app.domains.environments.models import Environment  # noqa: F401 (registers on the shared registry)
@@ -63,6 +84,88 @@ class HttpMethod(str, enum.Enum):
     OPTIONS = "OPTIONS"
 
 
+class ApiCollection(Base):
+    """Top-level, project-scoped container in the Collection -> Folder ->
+    Request hierarchy (Sprint 9). See module docstring."""
+
+    __tablename__ = "api_collections"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Same monotonic-ordering trick as every other domain's `sequence` -
+    # used to order "newest first" deterministically.
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
+
+    # Read-only relationships used only by the tree endpoint
+    # (repository.get_tree) to eager-load in one round trip - all writes go
+    # through the repository functions above, never through these.
+    folders: Mapped[list["ApiFolder"]] = relationship(
+        "ApiFolder",
+        order_by="ApiFolder.sequence.desc()",
+        viewonly=True,
+    )
+    # Top-level requests only (folder_id IS NULL) - a folder's own requests
+    # are reached via ApiFolder.requests instead, so a request never appears
+    # in both places.
+    requests: Mapped[list["SavedApiRequest"]] = relationship(
+        "SavedApiRequest",
+        primaryjoin="and_(ApiCollection.id == SavedApiRequest.collection_id, "
+        "SavedApiRequest.folder_id.is_(None))",
+        order_by="SavedApiRequest.sequence.desc()",
+        viewonly=True,
+    )
+
+
+class ApiFolder(Base):
+    """A single level of nesting inside one `ApiCollection` - no
+    folder-within-folder nesting (deliberate scope cut, see module
+    docstring)."""
+
+    __tablename__ = "api_folders"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("api_collections.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True)
+
+    # Read-only, tree-endpoint-only relationship - see ApiCollection.folders'
+    # comment above.
+    requests: Mapped[list["SavedApiRequest"]] = relationship(
+        "SavedApiRequest",
+        order_by="SavedApiRequest.sequence.desc()",
+        viewonly=True,
+    )
+
+
 class SavedApiRequest(Base):
     __tablename__ = "saved_api_requests"
 
@@ -71,6 +174,24 @@ class SavedApiRequest(Base):
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # The collection this request lives in (Sprint 9). CASCADE: deleting a
+    # collection is a real, user-facing destructive action that removes its
+    # requests too (same posture as deleting a project cascading
+    # everything in it). This is the final, post-backfill shape (NOT NULL);
+    # the Sprint 9 migration adds the column nullable first, backfills every
+    # pre-existing row into a per-project "My Requests" collection, then
+    # tightens it to NOT NULL - see that migration's own docstring.
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("api_collections.id", ondelete="CASCADE"), nullable=False
+    )
+    # The (optional) folder this request is filed under, within
+    # `collection_id`. SET NULL: deleting a folder un-files its requests
+    # back to the collection's top level rather than deleting them - see
+    # module docstring. `null` means "top level of the collection", not
+    # "no collection" (`collection_id` always identifies the collection).
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("api_folders.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     method: Mapped[HttpMethod] = mapped_column(

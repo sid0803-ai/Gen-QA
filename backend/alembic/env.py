@@ -37,6 +37,8 @@ from app.domains.executions import models as executions_models  # noqa: F401
 # every future autogenerate run, not just this one.
 from app.domains.schedules import models as schedules_models  # noqa: F401
 # Sprint 8: SavedApiRequest (api_performer domain, FKs to environments).
+# Sprint 9: same module also now defines ApiCollection/ApiFolder
+# (Collection -> Folder -> Request hierarchy) - no separate import needed.
 from app.domains.api_performer import models as api_performer_models  # noqa: F401
 
 # this is the Alembic Config object, which provides access to values within

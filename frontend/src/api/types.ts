@@ -610,6 +610,8 @@ export type ApiRequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HE
 export interface SavedApiRequest {
   id: string;
   project_id: string;
+  collection_id: string;
+  folder_id: string | null;
   name: string;
   method: string;
   url: string;
@@ -622,7 +624,19 @@ export interface SavedApiRequest {
   updated_at: string;
 }
 
-/** Body for POST (create, `name` required) and PATCH (update, all optional) of a saved request. */
+/**
+ * Body for POST (create) and PATCH (update) of a saved request.
+ *
+ * Create: `name`, `method`, `url`, and `collection_id` are required;
+ * `folder_id` is optional (top-level in the collection when omitted).
+ *
+ * Update: every field keeps the "omitted key means unchanged" convention,
+ * EXCEPT `folder_id`, which must distinguish "key omitted" (leave
+ * unchanged) from "key explicitly `null`" (un-file the request, moving it
+ * to the collection's top level) — so `folder_id` is typed as
+ * `string | null | undefined` rather than just `string | undefined`.
+ * `collection_id` is not patchable this sprint.
+ */
 export interface SavedApiRequestInput {
   name?: string;
   method?: ApiRequestMethod;
@@ -631,6 +645,71 @@ export interface SavedApiRequestInput {
   query_params?: Record<string, string>;
   body?: string;
   environment_id?: string;
+  collection_id?: string;
+  folder_id?: string | null;
+}
+
+/** Body for POST /api-requests (create) — `name`, `method`, `url`, and `collection_id` are required; `folder_id` is optional. */
+export interface SavedApiRequestCreateInput extends SavedApiRequestInput {
+  name: string;
+  method: ApiRequestMethod;
+  url: string;
+  collection_id: string;
+}
+
+// --- API Collections / Folders (Sprint 9) ---
+
+/** Shape returned by GET/POST/PATCH /projects/{id}/api-collections(/{collectionId}). */
+export interface ApiCollection {
+  id: string;
+  project_id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiCollectionInput {
+  name: string;
+}
+
+export type ApiCollectionUpdateInput = Partial<ApiCollectionInput>;
+
+/** Shape returned by GET/POST/PATCH /projects/{id}/api-collections/{cid}/folders(/{folderId}). */
+export interface ApiFolder {
+  id: string;
+  collection_id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiFolderInput {
+  name: string;
+}
+
+export type ApiFolderUpdateInput = Partial<ApiFolderInput>;
+
+/** A request as it appears nested inside a collection-tree node (not the full `SavedApiRequest` shape). */
+export interface ApiCollectionTreeRequest {
+  id: string;
+  name: string;
+  method: string;
+}
+
+export interface ApiCollectionTreeFolder {
+  id: string;
+  name: string;
+  requests: ApiCollectionTreeRequest[];
+}
+
+/** Shape returned by GET /projects/{id}/api-collections/tree — one entry per collection, with its folders and top-level requests nested inline. */
+export interface ApiCollectionTreeNode {
+  id: string;
+  name: string;
+  requests: ApiCollectionTreeRequest[];
+  folders: ApiCollectionTreeFolder[];
 }
 
 /** Body for POST /api-requests/execute (ad-hoc) and POST /api-requests/{id}/execute (saved, override). */

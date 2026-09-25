@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as apiPerformerApi from '../api/apiPerformer';
-import type { ApiRequestExecuteInput, SavedApiRequestInput } from '../api/types';
+import type {
+  ApiRequestExecuteInput,
+  SavedApiRequestCreateInput,
+  SavedApiRequestInput,
+} from '../api/types';
+import { apiCollectionsTreeKey } from './useApiCollections';
 
 export function savedRequestsKey(projectId: string | undefined) {
   return ['projects', projectId, 'api-requests'] as const;
@@ -29,10 +34,11 @@ export function useSavedRequest(projectId: string | undefined, requestId: string
 export function useCreateSavedRequest(projectId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: SavedApiRequestInput) =>
+    mutationFn: (input: SavedApiRequestCreateInput) =>
       apiPerformerApi.createSavedRequest(projectId as string, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: savedRequestsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: apiCollectionsTreeKey(projectId) });
     },
   });
 }
@@ -44,6 +50,7 @@ export function useUpdateSavedRequest(projectId: string | undefined) {
       apiPerformerApi.updateSavedRequest(projectId as string, id, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: savedRequestsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: apiCollectionsTreeKey(projectId) });
     },
   });
 }
@@ -55,6 +62,7 @@ export function useDeleteSavedRequest(projectId: string | undefined) {
       apiPerformerApi.deleteSavedRequest(projectId as string, requestId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: savedRequestsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: apiCollectionsTreeKey(projectId) });
     },
   });
 }

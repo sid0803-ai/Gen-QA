@@ -3,6 +3,7 @@ import type {
   ApiExecuteResult,
   ApiRequestExecuteInput,
   SavedApiRequest,
+  SavedApiRequestCreateInput,
   SavedApiRequestInput,
 } from './types';
 
@@ -19,7 +20,7 @@ export function getSavedRequest(
 
 export function createSavedRequest(
   projectId: string,
-  input: SavedApiRequestInput,
+  input: SavedApiRequestCreateInput,
 ): Promise<SavedApiRequest> {
   return api.post<SavedApiRequest>(`/projects/${projectId}/api-requests`, input);
 }

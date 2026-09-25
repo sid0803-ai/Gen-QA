@@ -7,6 +7,99 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.domains.api_performer.models import HttpMethod
 
 
+# --- ApiCollection -------------------------------------------------------
+
+
+class ApiCollectionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ApiCollectionUpdate(BaseModel):
+    """Any subset of the editable fields. Same "omitted and null both mean
+    leave unchanged" convention as every other PATCH in this codebase."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class ApiCollectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    created_by: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- ApiFolder -------------------------------------------------------
+
+
+class ApiFolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ApiFolderUpdate(BaseModel):
+    """Any subset of the editable fields. Same "omitted and null both mean
+    leave unchanged" convention as every other PATCH in this codebase."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class ApiFolderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    collection_id: uuid.UUID
+    name: str
+    created_by: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- Tree ----------------------------------------------------------------
+
+
+class TreeRequestNode(BaseModel):
+    """Lightweight per-request shape for the tree endpoint - id/name/method
+    only. The full request (headers/body/query params/environment_id/etc.)
+    is fetched via the existing `GET /api-requests/{request_id}` endpoint,
+    unchanged - the tree exists to save the frontend an N+1 round trip for
+    its sidebar, not to duplicate the full resource."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    method: HttpMethod
+
+
+class TreeFolderNode(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    requests: list[TreeRequestNode]
+
+
+class TreeCollectionNode(BaseModel):
+    """One collection, with its folders and top-level (folder_id IS NULL)
+    requests. A given request appears in exactly one place in this tree:
+    either inside its folder's `requests` list, or - if it has no folder -
+    directly in its collection's own `requests` list. Never both, never
+    neither."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    requests: list[TreeRequestNode]
+    folders: list[TreeFolderNode]
+
+
+# --- SavedApiRequest -------------------------------------------------------
+
+
 class SavedApiRequestCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     method: HttpMethod
@@ -15,6 +108,14 @@ class SavedApiRequestCreate(BaseModel):
     query_params: dict[str, str] = Field(default_factory=dict)
     body: str | None = None
     environment_id: uuid.UUID | None = None
+    # Sprint 9: every saved request now lives in exactly one collection.
+    # Required (404 if it doesn't resolve in this project).
+    collection_id: uuid.UUID
+    # Optional folder within `collection_id` (404 if it doesn't resolve in
+    # this project, 400 if it belongs to a different collection than
+    # `collection_id`). Omitted/null -> the request sits at the
+    # collection's top level.
+    folder_id: uuid.UUID | None = None
 
 
 class SavedApiRequestUpdate(BaseModel):
@@ -25,7 +126,30 @@ class SavedApiRequestUpdate(BaseModel):
     likewise cannot be cleared back to "no environment" via this endpoint
     (there is currently no way to un-set it back to null once set - a known,
     minor limitation shared with every other nullable-FK PATCH field in this
-    codebase's established convention)."""
+    codebase's established convention).
+
+    `folder_id` is a DELIBERATE, DOCUMENTED EXCEPTION to that blanket
+    convention: moving a request out of a folder back to its collection's
+    top level is a real, common action in a Postman-style UI (drag a
+    request out of a folder), so this field distinguishes "key omitted from
+    the request body" (leave `folder_id` unchanged) from "key present, set
+    to `null`" (explicitly clear it back to the collection's top level) via
+    Pydantic's `model_fields_set` (see the router, which reads
+    `"folder_id" in payload.model_fields_set`) - not via the field's own
+    default. Setting `folder_id` to a real folder id via this endpoint is
+    validated the same way as on create: 404 if it doesn't resolve in this
+    project, 400 if it belongs to a different collection than the request's
+    own (unchanged) `collection_id`.
+
+    `collection_id` itself is NOT patchable this sprint - moving a request
+    between collections is a deliberate scope cut, same pattern as Sprint
+    7's `ScheduledJob.test_case_id`: "delete and recreate in the target
+    collection" is the workaround. Every other nullable-FK PATCH field in
+    this codebase keeps the ordinary blanket convention; only `folder_id`
+    gets this treatment, because "un-file back to top level" is common
+    enough here to be worth the special case, whereas e.g. `environment_id`
+    was not judged common enough for that treatment in Sprint 8.
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     method: HttpMethod | None = None
@@ -34,6 +158,7 @@ class SavedApiRequestUpdate(BaseModel):
     query_params: dict[str, str] | None = None
     body: str | None = None
     environment_id: uuid.UUID | None = None
+    folder_id: uuid.UUID | None = None
 
 
 class SavedApiRequestRead(BaseModel):
@@ -41,6 +166,8 @@ class SavedApiRequestRead(BaseModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
+    collection_id: uuid.UUID
+    folder_id: uuid.UUID | None
     name: str
     method: HttpMethod
     url: str
@@ -55,7 +182,8 @@ class SavedApiRequestRead(BaseModel):
 
 class AdHocExecuteRequest(BaseModel):
     """Body for `POST /api-requests/execute` - identical shape to
-    SavedApiRequestCreate minus `name` (nothing is persisted)."""
+    SavedApiRequestCreate minus `name`/`collection_id`/`folder_id` (nothing
+    is persisted, so there's no collection/folder to file it under)."""
 
     method: HttpMethod
     url: str = Field(min_length=1, max_length=2048)

@@ -23,6 +23,8 @@ from httpx import AsyncClient
 READ_KEYS = {
     "id",
     "project_id",
+    "collection_id",
+    "folder_id",
     "name",
     "method",
     "url",
@@ -36,6 +38,9 @@ READ_KEYS = {
 }
 
 EXECUTE_KEYS = {"status_code", "headers", "body", "duration_ms", "error"}
+
+COLLECTION_READ_KEYS = {"id", "project_id", "name", "created_by", "created_at", "updated_at"}
+FOLDER_READ_KEYS = {"id", "collection_id", "name", "created_by", "created_at", "updated_at"}
 
 
 async def _create_project(client: AsyncClient, headers: dict, name: str = "Project X") -> dict:
@@ -69,7 +74,32 @@ def _base(project_id: str) -> str:
     return f"/api/v1/projects/{project_id}/api-requests"
 
 
+def _collections_base(project_id: str) -> str:
+    return f"/api/v1/projects/{project_id}/api-collections"
+
+
+def _folders_base(project_id: str, collection_id: str) -> str:
+    return f"{_collections_base(project_id)}/{collection_id}/folders"
+
+
+async def _create_collection(client: AsyncClient, auth_headers: dict, project_id: str, name: str = "Collection") -> dict:
+    resp = await client.post(_collections_base(project_id), json={"name": name}, headers=auth_headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _create_folder(
+    client: AsyncClient, auth_headers: dict, project_id: str, collection_id: str, name: str = "Folder"
+) -> dict:
+    resp = await client.post(_folders_base(project_id, collection_id), json={"name": name}, headers=auth_headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 async def _create_saved_request(client: AsyncClient, auth_headers: dict, project_id: str, **overrides) -> dict:
+    if "collection_id" not in overrides:
+        collection = await _create_collection(client, auth_headers, project_id)
+        overrides = {**overrides, "collection_id": collection["id"]}
     body = {"name": "Ping", "method": "GET", "url": "https://example.com/ping"}
     body.update(overrides)
     resp = await client.post(_base(project_id), json=body, headers=auth_headers)
@@ -169,9 +199,15 @@ async def test_create_full_shape(register_user: Callable[..., Awaitable[dict]], 
 async def test_defaults(register_user: Callable[..., Awaitable[dict]], client: AsyncClient) -> None:
     owner = await register_user()
     project = await _create_project(client, owner["headers"])
+    collection = await _create_collection(client, owner["headers"], project["id"])
     resp = await client.post(
         _base(project["id"]),
-        json={"name": "Bare", "method": "GET", "url": "https://example.com"},
+        json={
+            "name": "Bare",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": collection["id"],
+        },
         headers=owner["headers"],
     )
     assert resp.status_code == 201, resp.text
@@ -243,10 +279,16 @@ async def test_role_enforcement(
     member = await register_user()
     await _add_member(client, owner["headers"], project["id"], member["email"], "member")
     stranger = await register_user()
+    collection = await _create_collection(client, owner["headers"], project["id"])
 
     create_viewer = await client.post(
         _base(project["id"]),
-        json={"name": "X", "method": "GET", "url": "https://example.com"},
+        json={
+            "name": "X",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": collection["id"],
+        },
         headers=viewer["headers"],
     )
     assert create_viewer.status_code == 403
@@ -277,13 +319,373 @@ async def test_project_isolation(user_a: dict, user_b: dict, client: AsyncClient
     assert (await client.get(f"{base_b}/{saved['id']}", headers=user_a["headers"])).status_code == 404
     assert (
         await client.post(
-            base_b, json={"name": "x", "method": "GET", "url": "https://x.example.com"}, headers=user_a["headers"]
+            base_b,
+            json={
+                "name": "x",
+                "method": "GET",
+                "url": "https://x.example.com",
+                "collection_id": saved["collection_id"],
+            },
+            headers=user_a["headers"],
         )
     ).status_code == 404
     assert (
         await client.patch(f"{base_b}/{saved['id']}", json={"name": "hijacked"}, headers=user_a["headers"])
     ).status_code == 404
     assert (await client.delete(f"{base_b}/{saved['id']}", headers=user_a["headers"])).status_code == 404
+
+
+# --- Collections/Folders (Sprint 9) ---------------------------------------
+
+
+async def test_collection_crud_and_role_enforcement(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    viewer = await register_user()
+    await _add_member(client, owner["headers"], project["id"], viewer["email"], "viewer")
+    member = await register_user()
+    await _add_member(client, owner["headers"], project["id"], member["email"], "member")
+
+    create_viewer = await client.post(
+        _collections_base(project["id"]), json={"name": "X"}, headers=viewer["headers"]
+    )
+    assert create_viewer.status_code == 403
+
+    collection = await _create_collection(client, owner["headers"], project["id"], name="Suite A")
+    assert set(collection.keys()) == COLLECTION_READ_KEYS
+    assert collection["name"] == "Suite A"
+    assert collection["project_id"] == project["id"]
+    assert collection["created_by"] == owner["user"]["id"]
+
+    second = await _create_collection(client, owner["headers"], project["id"], name="Suite B")
+    list_resp = await client.get(_collections_base(project["id"]), headers=owner["headers"])
+    assert list_resp.status_code == 200
+    assert [c["id"] for c in list_resp.json()] == [second["id"], collection["id"]]
+
+    patch_viewer = await client.patch(
+        f"{_collections_base(project['id'])}/{collection['id']}",
+        json={"name": "nope"},
+        headers=viewer["headers"],
+    )
+    assert patch_viewer.status_code == 403
+
+    patch_resp = await client.patch(
+        f"{_collections_base(project['id'])}/{collection['id']}",
+        json={"name": "Renamed"},
+        headers=member["headers"],
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["name"] == "Renamed"
+
+    delete_member = await client.delete(
+        f"{_collections_base(project['id'])}/{collection['id']}", headers=member["headers"]
+    )
+    assert delete_member.status_code == 403
+
+    delete_admin = await client.delete(
+        f"{_collections_base(project['id'])}/{collection['id']}", headers=owner["headers"]
+    )
+    assert delete_admin.status_code == 204
+
+    missing_patch = await client.patch(
+        f"{_collections_base(project['id'])}/{collection['id']}",
+        json={"name": "x"},
+        headers=owner["headers"],
+    )
+    assert missing_patch.status_code == 404
+
+
+async def test_collection_project_isolation(user_a: dict, user_b: dict, client: AsyncClient) -> None:
+    project_b = await _create_project(client, user_b["headers"], "B's project")
+    collection = await _create_collection(client, user_b["headers"], project_b["id"])
+    base_b = _collections_base(project_b["id"])
+
+    assert (await client.get(base_b, headers=user_a["headers"])).status_code == 404
+    assert (
+        await client.post(base_b, json={"name": "x"}, headers=user_a["headers"])
+    ).status_code == 404
+    assert (
+        await client.patch(f"{base_b}/{collection['id']}", json={"name": "hijack"}, headers=user_a["headers"])
+    ).status_code == 404
+    assert (await client.delete(f"{base_b}/{collection['id']}", headers=user_a["headers"])).status_code == 404
+
+
+async def test_delete_collection_cascades_to_folders_and_requests(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    collection = await _create_collection(client, owner["headers"], project["id"])
+    folder = await _create_folder(client, owner["headers"], project["id"], collection["id"])
+    saved = await _create_saved_request(
+        client, owner["headers"], project["id"], collection_id=collection["id"], folder_id=folder["id"]
+    )
+
+    delete_resp = await client.delete(
+        f"{_collections_base(project['id'])}/{collection['id']}", headers=owner["headers"]
+    )
+    assert delete_resp.status_code == 204
+
+    assert (
+        await client.get(f"{_base(project['id'])}/{saved['id']}", headers=owner["headers"])
+    ).status_code == 404
+    assert (
+        await client.get(_folders_base(project["id"], collection["id"]), headers=owner["headers"])
+    ).status_code == 404
+
+
+async def test_folder_crud_role_enforcement_and_404s(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    viewer = await register_user()
+    await _add_member(client, owner["headers"], project["id"], viewer["email"], "viewer")
+    member = await register_user()
+    await _add_member(client, owner["headers"], project["id"], member["email"], "member")
+    collection = await _create_collection(client, owner["headers"], project["id"])
+
+    missing_collection = await client.post(
+        f"{_collections_base(project['id'])}/00000000-0000-0000-0000-000000000000/folders",
+        json={"name": "X"},
+        headers=owner["headers"],
+    )
+    assert missing_collection.status_code == 404
+
+    create_viewer = await client.post(
+        _folders_base(project["id"], collection["id"]), json={"name": "X"}, headers=viewer["headers"]
+    )
+    assert create_viewer.status_code == 403
+
+    folder = await _create_folder(client, owner["headers"], project["id"], collection["id"], name="Auth")
+    assert set(folder.keys()) == FOLDER_READ_KEYS
+    assert folder["collection_id"] == collection["id"]
+
+    second_folder = await _create_folder(client, owner["headers"], project["id"], collection["id"], name="Users")
+    list_resp = await client.get(_folders_base(project["id"], collection["id"]), headers=owner["headers"])
+    assert list_resp.status_code == 200
+    assert [f["id"] for f in list_resp.json()] == [second_folder["id"], folder["id"]]
+
+    patch_resp = await client.patch(
+        f"{_folders_base(project['id'], collection['id'])}/{folder['id']}",
+        json={"name": "Renamed"},
+        headers=member["headers"],
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["name"] == "Renamed"
+
+    delete_viewer = await client.delete(
+        f"{_folders_base(project['id'], collection['id'])}/{folder['id']}", headers=viewer["headers"]
+    )
+    assert delete_viewer.status_code == 403
+
+    delete_admin = await client.delete(
+        f"{_folders_base(project['id'], collection['id'])}/{folder['id']}", headers=owner["headers"]
+    )
+    assert delete_admin.status_code == 204
+
+    missing_folder = await client.get(
+        f"{_folders_base(project['id'], collection['id'])}",
+        headers=owner["headers"],
+    )
+    assert missing_folder.status_code == 200
+    assert missing_folder.json() == [second_folder]
+
+
+async def test_delete_folder_unfiles_requests_instead_of_deleting_them(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    collection = await _create_collection(client, owner["headers"], project["id"])
+    folder = await _create_folder(client, owner["headers"], project["id"], collection["id"])
+    saved = await _create_saved_request(
+        client, owner["headers"], project["id"], collection_id=collection["id"], folder_id=folder["id"]
+    )
+    assert saved["folder_id"] == folder["id"]
+
+    delete_resp = await client.delete(
+        f"{_folders_base(project['id'], collection['id'])}/{folder['id']}", headers=owner["headers"]
+    )
+    assert delete_resp.status_code == 204
+
+    get_resp = await client.get(f"{_base(project['id'])}/{saved['id']}", headers=owner["headers"])
+    assert get_resp.status_code == 200
+    assert get_resp.json()["folder_id"] is None
+    assert get_resp.json()["collection_id"] == collection["id"]
+
+
+async def test_create_request_requires_valid_collection_and_folder(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    collection = await _create_collection(client, owner["headers"], project["id"])
+    other_collection = await _create_collection(client, owner["headers"], project["id"], name="Other")
+    folder_in_other = await _create_folder(client, owner["headers"], project["id"], other_collection["id"])
+
+    missing_collection = await client.post(
+        _base(project["id"]),
+        json={
+            "name": "X",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": "00000000-0000-0000-0000-000000000000",
+        },
+        headers=owner["headers"],
+    )
+    assert missing_collection.status_code == 404
+
+    missing_folder = await client.post(
+        _base(project["id"]),
+        json={
+            "name": "X",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": collection["id"],
+            "folder_id": "00000000-0000-0000-0000-000000000000",
+        },
+        headers=owner["headers"],
+    )
+    assert missing_folder.status_code == 404
+
+    mismatched_folder = await client.post(
+        _base(project["id"]),
+        json={
+            "name": "X",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": collection["id"],
+            "folder_id": folder_in_other["id"],
+        },
+        headers=owner["headers"],
+    )
+    assert mismatched_folder.status_code == 400
+    assert "Folder does not belong" in mismatched_folder.json()["detail"]
+
+    ok = await client.post(
+        _base(project["id"]),
+        json={
+            "name": "X",
+            "method": "GET",
+            "url": "https://example.com",
+            "collection_id": collection["id"],
+        },
+        headers=owner["headers"],
+    )
+    # Sanity: a valid collection_id with no folder_id succeeds.
+    assert ok.status_code == 201, ok.text
+
+
+async def test_patch_folder_id_omitted_vs_explicit_null(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    """The one deliberate exception to the blanket PATCH convention: omitting
+    `folder_id` leaves it unchanged, but sending it explicitly as `null`
+    clears it back to the collection's top level."""
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    collection = await _create_collection(client, owner["headers"], project["id"])
+    folder = await _create_folder(client, owner["headers"], project["id"], collection["id"])
+    saved = await _create_saved_request(
+        client, owner["headers"], project["id"], collection_id=collection["id"], folder_id=folder["id"]
+    )
+    assert saved["folder_id"] == folder["id"]
+
+    # Omitted entirely - folder_id stays the same.
+    patch_omitted = await client.patch(
+        f"{_base(project['id'])}/{saved['id']}", json={"name": "renamed"}, headers=owner["headers"]
+    )
+    assert patch_omitted.status_code == 200
+    assert patch_omitted.json()["folder_id"] == folder["id"]
+    assert patch_omitted.json()["name"] == "renamed"
+
+    # Explicit null - folder_id cleared to top level.
+    patch_null = await client.patch(
+        f"{_base(project['id'])}/{saved['id']}", json={"folder_id": None}, headers=owner["headers"]
+    )
+    assert patch_null.status_code == 200
+    assert patch_null.json()["folder_id"] is None
+    assert patch_null.json()["collection_id"] == collection["id"]
+
+    # Set to a new folder within the same collection.
+    other_folder = await _create_folder(client, owner["headers"], project["id"], collection["id"], name="Other")
+    patch_set = await client.patch(
+        f"{_base(project['id'])}/{saved['id']}",
+        json={"folder_id": other_folder["id"]},
+        headers=owner["headers"],
+    )
+    assert patch_set.status_code == 200
+    assert patch_set.json()["folder_id"] == other_folder["id"]
+
+    # Set to a folder that belongs to a different collection -> 400.
+    other_collection = await _create_collection(client, owner["headers"], project["id"], name="Other Coll")
+    folder_elsewhere = await _create_folder(client, owner["headers"], project["id"], other_collection["id"])
+    patch_mismatch = await client.patch(
+        f"{_base(project['id'])}/{saved['id']}",
+        json={"folder_id": folder_elsewhere["id"]},
+        headers=owner["headers"],
+    )
+    assert patch_mismatch.status_code == 400
+
+    # Set to a nonexistent folder -> 404.
+    patch_missing = await client.patch(
+        f"{_base(project['id'])}/{saved['id']}",
+        json={"folder_id": "00000000-0000-0000-0000-000000000000"},
+        headers=owner["headers"],
+    )
+    assert patch_missing.status_code == 404
+
+
+async def test_tree_endpoint_shape_and_request_appears_exactly_once(
+    register_user: Callable[..., Awaitable[dict]], client: AsyncClient
+) -> None:
+    owner = await register_user()
+    project = await _create_project(client, owner["headers"])
+    stranger = await register_user()
+
+    collection = await _create_collection(client, owner["headers"], project["id"], name="Suite")
+    folder = await _create_folder(client, owner["headers"], project["id"], collection["id"], name="Auth")
+    top_level = await _create_saved_request(
+        client, owner["headers"], project["id"], collection_id=collection["id"], name="Top", method="GET"
+    )
+    filed = await _create_saved_request(
+        client,
+        owner["headers"],
+        project["id"],
+        collection_id=collection["id"],
+        folder_id=folder["id"],
+        name="Filed",
+        method="POST",
+    )
+    empty_collection = await _create_collection(client, owner["headers"], project["id"], name="Empty")
+
+    tree_resp = await client.get(f"{_collections_base(project['id'])}/tree", headers=owner["headers"])
+    assert tree_resp.status_code == 200
+    tree = tree_resp.json()
+    assert [c["id"] for c in tree] == [empty_collection["id"], collection["id"]]
+
+    suite_node = next(c for c in tree if c["id"] == collection["id"])
+    assert set(suite_node.keys()) == {"id", "name", "requests", "folders"}
+    assert [r["id"] for r in suite_node["requests"]] == [top_level["id"]]
+    assert suite_node["requests"][0] == {"id": top_level["id"], "name": "Top", "method": "GET"}
+
+    assert len(suite_node["folders"]) == 1
+    folder_node = suite_node["folders"][0]
+    assert set(folder_node.keys()) == {"id", "name", "requests"}
+    assert folder_node["id"] == folder["id"]
+    assert [r["id"] for r in folder_node["requests"]] == [filed["id"]]
+    assert folder_node["requests"][0] == {"id": filed["id"], "name": "Filed", "method": "POST"}
+
+    empty_node = next(c for c in tree if c["id"] == empty_collection["id"])
+    assert empty_node["requests"] == []
+    assert empty_node["folders"] == []
+
+    # A stranger to the project can't see the tree at all.
+    stranger_resp = await client.get(f"{_collections_base(project['id'])}/tree", headers=stranger["headers"])
+    assert stranger_resp.status_code == 404
 
 
 # --- Execution -------------------------------------------------------------
